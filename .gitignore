@@ -10,6 +10,7 @@ target
 # 计划、申报书、草稿一律不进仓库
 计划.md
 PLAN.md
+*-PLAN.md
 申报书.md
 docs/
 *.draft.md
