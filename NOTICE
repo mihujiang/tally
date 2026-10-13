@@ -1,0 +1,35 @@
+tally
+Copyright 2026 mihujiang
+
+------------------------------------------------------------------------
+第三方依赖
+------------------------------------------------------------------------
+
+核心包（bpe / vocab / budget / tally）只依赖 MoonBit 官方标准库，无第三方依赖：
+
+  moonbitlang/core      Apache-2.0
+  moonbitlang/x         Apache-2.0   仅 CLI 包 cmd/main 使用其 fs 模块做 IO
+
+------------------------------------------------------------------------
+参考实现声明
+------------------------------------------------------------------------
+
+预切分模式（固定的一条 7 分支形状）与 `.tiktoken` 词表读取格式，以
+OpenAI tiktoken（MIT License）为**兼容性参照**：
+
+  https://github.com/openai/tiktoken
+
+本项目为原创实现，未复制其源码。公开词表文件仅作验证语料与兼容性输入。
+
+------------------------------------------------------------------------
+生成物与数据许可
+------------------------------------------------------------------------
+
+  * tests/golden/sample-vocab.txt、vocab/sample_vocab_wbtest.mbt
+      由 tools/gen_sample_vocab.py 确定性生成，随本仓库以 Apache-2.0 发布。
+
+  * bpe/unicode/generated.mbt
+      Unicode 属性表（\p{L} / \p{N} / \s 的区间表）由 tools/gen_unicode.py
+      基于 Python unicodedata（Unicode 14.0.0）离线生成。
+      Unicode 数据文件受 Unicode, Inc. 的许可约束：
+      https://www.unicode.org/license.txt

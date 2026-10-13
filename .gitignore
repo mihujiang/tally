@@ -1,0 +1,24 @@
+# --- build / toolchain ---
+.DS_Store
+_build/
+target/
+target
+.mooncakes/
+.moonagent/
+
+# --- 发布包内容只能靠 .gitignore 控制（moon.mod 没有 exclude 字段）---
+# 计划、申报书、草稿一律不进仓库
+计划.md
+PLAN.md
+申报书.md
+docs/
+*.draft.md
+*.tmp
+# tools/ 只保留生成器（夹具/属性表靠它们复现，--check 依赖），其余草稿忽略
+tools/*
+!tools/gen_unicode.py
+!tools/gen_sample_vocab.py
+
+# 大型外部数据（大词表由调用方提供，小样本进仓库）
+/data/*.tiktoken
+!tests/golden/*.txt

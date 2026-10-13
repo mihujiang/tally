@@ -1,0 +1,12 @@
+// tally CLI。IO 只出现在这里：核心包零 IO、零第三方依赖。
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/x/fs",
+  "weopqrst/tally",
+  "weopqrst/tally/budget",
+}
+
+options(
+  "is-main": true,
+)

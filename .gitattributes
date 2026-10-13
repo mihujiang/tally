@@ -1,0 +1,4 @@
+# 本项目的核心卖点是「逐字节可复现」：Unicode 属性表、夹具词表与 golden 文件
+# 一旦被 CRLF 改写，tools/*.py --check 与字节一致性测试就会失效。
+# 因此仓库与工作区统一使用 LF。
+* text=auto eol=lf

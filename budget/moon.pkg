@@ -1,0 +1,11 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+  "weopqrst/tally/vocab",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"
+
+// 预算 `budget`：上下文装配、截断、可解释的丢弃报告。
+// 依赖方向：budget ──▶ vocab ──▶ bpe。budget 不认识"钱"。

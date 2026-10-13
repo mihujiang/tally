@@ -1,0 +1,11 @@
+import {
+  "weopqrst/tally/bpe",
+  "weopqrst/tally/budget",
+  "weopqrst/tally/vocab",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"
+
+// 根包 `tally`：门面 API 的最短路径。零 IO、零第三方依赖。

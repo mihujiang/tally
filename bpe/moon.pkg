@@ -1,0 +1,13 @@
+import {
+  "weopqrst/tally/bpe/unicode" @unicode,
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "test"
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"
+
+// 算法内核 `bpe`：词表无关的 byte-level BPE。零第三方依赖、零 IO。

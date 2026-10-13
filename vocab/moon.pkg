@@ -1,0 +1,18 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+  "weopqrst/tally/bpe",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "test"
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"
+
+// 词表 `vocab`：模型、校验、自写 base64、加载与导出。
+// 依赖方向：vocab ──▶ bpe。vocab 不认识"上下文预算"。
+//
+// 说明：`String -> Bytes` 只用到 core 的 UTF-8 编码器（一个平凡的转换）；
+// `Bytes -> 码点` 的**宽松解码**与字节跨度跟踪是本项目自写的（bpe/bytes_util.mbt）。
