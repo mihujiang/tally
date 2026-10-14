@@ -104,11 +104,7 @@ fn match_special(v : VocabView, bytes : Bytes, pos : Int) -> (Int, Int) {
 /// 把一段普通文本（不含特殊 token）编码为 token id 序列。
 pub fn encode_ordinary(v : VocabView, bytes : Bytes) -> Array[Int] {
   let out : Array[Int] = []
-  let pieces = pretokenize(bytes)
-  for entry in pieces {
-    let (start, end) = entry
-    encode_piece(v, slice_bytes(bytes, start, end), out)
-  }
+  encode_ordinary_into(v, bytes, out)
   out
 }
 

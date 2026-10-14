@@ -9,7 +9,11 @@ pub fn Vocab::encode_bytes(self : Vocab, bytes : Bytes) -> Array[Int] {
 }
 
 ///|
-/// 编码一段文本。注意：先整体 UTF-8 编码，再按字节编码。
+/// 编码一段文本。先整体 UTF-8 编码，再按字节编码。
+///
+/// `String` 的编码结果必然是合法 UTF-8，于是 `@bpe.encode` 里那条
+/// 「严格解码成功 -> Unicode 语义」的路径正好生效，与参考实现 `encode(str)` 对齐。
+/// 不需要另一个入口。
 pub fn Vocab::encode_string(self : Vocab, text : String) -> Array[Int] {
   @bpe.encode(self.view(), @utf8.encode(text))
 }
@@ -35,5 +39,5 @@ pub fn Vocab::count_bytes(self : Vocab, bytes : Bytes) -> Int64 {
 ///|
 /// 文本的 token 数。
 pub fn Vocab::count(self : Vocab, text : String) -> Int64 {
-  self.count_bytes(@utf8.encode(text))
+  @bpe.encode(self.view(), @utf8.encode(text)).length().to_int64()
 }

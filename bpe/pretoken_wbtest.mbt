@@ -3,6 +3,7 @@
 // 每一条都对应手写模式里的一个分支或一个容易被写错的边界。
 
 ///|
+/// `String` 的编码结果必然是合法 UTF-8，走的就是「Unicode 语义」那条路径。
 fn pieces_text(text : String) -> Array[String] {
   let bytes = @utf8.encode(text)
   let out : Array[String] = []

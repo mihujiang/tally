@@ -1,5 +1,5 @@
 # tally-vocab v1
-# unicode 14.0.0
+# unicode 17.0.0
 # tokens 277
 [specials]
 276 PHxlbmRvZnRleHR8Pg==

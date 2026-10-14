@@ -15,11 +15,18 @@ PLAN.md
 docs/
 *.draft.md
 *.tmp
-# tools/ 只保留生成器（夹具/属性表靠它们复现，--check 依赖），其余草稿忽略
+# tools/ 只保留生成器（夹具/属性表/golden/FORMAT.lock 靠它们复现，--check 依赖），
+# 其余草稿忽略。README「开发」一节列出的每一个 --check 都必须有对应脚本在包里，
+# 否则"可复算"就是空话。
 tools/*
 !tools/gen_unicode.py
 !tools/gen_sample_vocab.py
+!tools/gen_pretoken_golden.py
+!tools/gen_alignment_golden.py
+!tools/gen_format_lock.py
+!tools/fetch_vocab.py
 
 # 大型外部数据（大词表由调用方提供，小样本进仓库）
-/data/*.tiktoken
+# 整个目录都忽略：否则空目录本身也会被 moon 打进发布包。
+/data/
 !tests/golden/*.txt

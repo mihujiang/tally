@@ -1,0 +1,11 @@
+tally-plan v1
+limit 8
+used 8
+pinned 3
+overflow false
+[kept]
+0 pinned system 3
+3 newest new 5
+[dropped]
+1 oldest old 3 为满足预算而丢弃（最早的历史，最先牺牲）
+2 middle mid 4 为满足预算而丢弃（优先级低于 Newest）

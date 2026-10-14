@@ -3,19 +3,24 @@
 
 This generator is a *build-time* tool. It does not ship inside the core
 packages (see .gitignore); only its output `bpe/unicode/generated.mbt` is
-committed, together with the Unicode version it was derived from.
+committed, together with the version it was derived from.
 
 Data source
 -----------
-`unicodedata` from the Python standard library, whose bundled Unicode version
-is reported by `unicodedata.unidata_version`. The `\s` class is generated from
-the Unicode `White_Space` property (PropList.txt), which is a fixed list.
+The `regex` module -- the *same engine* the reference tokenizer runs its
+pretokenization pattern on. That matters: `regex` bundles its own property
+tables, which are **newer than CPython's `unicodedata`** (14.0.0 on Python
+3.11). Generating from `regex` makes these tables describe exactly the classes
+the reference implementation sees, which is what the README promises.
+
+`regex` also respects the surrogate-free part of the code space: lone
+surrogates (U+D800..U+DFFF) are never letters/numbers/whitespace.
 
 Classes emitted
 ---------------
-* `letter`     -> general category Lu | Ll | Lt | Lm | Lo   (regex `\p{L}`)
-* `number`     -> general category Nd | Nl | No             (regex `\p{N}`)
-* `whitespace` -> Unicode White_Space property               (regex `\s`)
+* `letter`     -> `\\p{L}`   (Lu | Ll | Lt | Lm | Lo)
+* `number`     -> `\\p{N}`   (Nd | Nl | No)
+* `whitespace` -> `\\s`      (in `regex` this is the Unicode White_Space property)
 
 Usage
 -----
@@ -28,48 +33,50 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
-import unicodedata
+
+import regex
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+OUT = ROOT / "bpe" / "unicode" / "generated.mbt"
 
 MAX_CP = 0x10FFFF
-OUT = pathlib.Path(__file__).resolve().parent.parent / "bpe" / "unicode" / "generated.mbt"
 
-LETTER_CATEGORIES = {"Lu", "Ll", "Lt", "Lm", "Lo"}
-NUMBER_CATEGORIES = {"Nd", "Nl", "No"}
+# (name, pattern). `+` lets the engine hand us maximal runs, so one finditer
+# sweep yields the whole range table.
+CLASSES = [
+    ("letter", r"\p{L}+"),
+    ("number", r"\p{N}+"),
+    ("whitespace", r"\s+"),
+]
 
-# Unicode White_Space property (PropList.txt). Stable, explicit, auditable.
-WHITE_SPACE = [
-    (0x0009, 0x000D),
-    (0x0020, 0x0020),
-    (0x0085, 0x0085),
-    (0x00A0, 0x00A0),
-    (0x1680, 0x1680),
-    (0x2000, 0x200A),
-    (0x2028, 0x2029),
-    (0x202F, 0x202F),
-    (0x205F, 0x205F),
-    (0x3000, 0x3000),
+# First letter of each Unicode release, used to name the version the module
+# actually carries (the module exposes no version string of its own).
+VERSION_PROBES = [
+    ("17.0.0", 0x16D40),  # Beria Erfe
+    ("16.0.0", 0x1E5D0),  # Ol Onal
+    ("15.0.0", 0x1C89),   # Cyrillic Capital Letter Tje
+    ("14.0.0", 0x0870),   # Arabic Letter Hah With Small Arabic Letter Tah
 ]
 
 
-def to_ranges(pred) -> list[tuple[int, int]]:
-    """Collapse every code point satisfying `pred` into sorted closed ranges."""
-    ranges: list[tuple[int, int]] = []
-    start: int | None = None
-    for cp in range(MAX_CP + 1):
-        if pred(cp):
-            if start is None:
-                start = cp
-        elif start is not None:
-            ranges.append((start, cp - 1))
-            start = None
-    if start is not None:
-        ranges.append((start, MAX_CP))
-    return ranges
+def detect_unicode_version() -> str:
+    for version, cp in VERSION_PROBES:
+        if regex.fullmatch(r"\p{L}", chr(cp)):
+            return version
+    return "unknown"
 
 
-def merge(rs: list[tuple[int, int]]) -> list[tuple[int, int]]:
+def segments() -> list[tuple[int, str]]:
+    """The code space split around the surrogate block (which cannot be matched)."""
+    return [
+        (0x0000, "".join(map(chr, range(0xD800)))),
+        (0xE000, "".join(map(chr, range(0xE000, MAX_CP + 1)))),
+    ]
+
+
+def merge(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
     out: list[tuple[int, int]] = []
-    for lo, hi in rs:
+    for lo, hi in ranges:
         if out and lo <= out[-1][1] + 1:
             out[-1] = (out[-1][0], max(out[-1][1], hi))
         else:
@@ -77,7 +84,20 @@ def merge(rs: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return out
 
 
-def emit(name: str, ranges: list[tuple[int, int]]) -> str:
+def ranges_of(pattern: str) -> list[tuple[int, int]]:
+    rx = regex.compile(pattern)
+    found: list[tuple[int, int]] = []
+    for base, text in segments():
+        for m in rx.finditer(text):
+            found.append((m.start() + base, m.end() - 1 + base))
+    return merge(found)
+
+
+def total_of(ranges: list[tuple[int, int]]) -> int:
+    return sum(hi - lo + 1 for lo, hi in ranges)
+
+
+def emit_ranges(name: str, ranges: list[tuple[int, int]]) -> str:
     lines = [f"pub let {name} : Array[(UInt, UInt)] = ["]
     for lo, hi in ranges:
         lines.append(f"  (0x{lo:04X}, 0x{hi:04X}),")
@@ -86,29 +106,52 @@ def emit(name: str, ranges: list[tuple[int, int]]) -> str:
 
 
 def build() -> str:
-    version = unicodedata.unidata_version
-    letters = merge(to_ranges(lambda cp: unicodedata.category(chr(cp)) in LETTER_CATEGORIES))
-    numbers = merge(to_ranges(lambda cp: unicodedata.category(chr(cp)) in NUMBER_CATEGORIES))
-    spaces = merge(WHITE_SPACE)
+    unicode_version = detect_unicode_version()
+    tables = {name: ranges_of(pattern) for name, pattern in CLASSES}
+    labels = {name: name for name, _ in CLASSES}
+
+    letter, number, space = tables["letter"], tables["number"], tables["whitespace"]
+    counts = f"letter={len(letter)} number={len(number)} whitespace={len(space)}"
+    totals = (
+        f"letter={total_of(letter)} number={total_of(number)} "
+        f"whitespace={total_of(space)}"
+    )
 
     header = (
         "// Generated by tools/gen_unicode.py -- DO NOT EDIT.\n"
         "//\n"
-        f"// unicode_data_version = \"{version}\" (Python unicodedata.unidata_version)\n"
-        "// classes: letter = Lu|Ll|Lt|Lm|Lo, number = Nd|Nl|No, whitespace = White_Space\n"
-        f"// range counts: letter={len(letters)} number={len(numbers)} whitespace={len(spaces)}\n"
+        f"// data source: regex module {regex.__version__}  (\\p{{L}}, \\p{{N}}, \\s)\n"
+        "// The reference tokenizer runs its pretokenization pattern on this same\n"
+        "// engine, so these tables describe exactly the classes it sees. That is why\n"
+        "// the source is `regex` and not CPython's `unicodedata` -- the latter is\n"
+        "// older (14.0.0 on Python 3.11) and would disagree on 26k+ code points.\n"
+        f'// unicode_version = "{unicode_version}" (detected from the module tables)\n'
+        "//\n"
+        f"// range counts: {counts}\n"
+        f"// code point totals: {totals}\n"
         "\n"
-        f"///| The Unicode version these tables were derived from.\n"
-        f"pub let unicode_version : String = \"{version}\"\n"
+        f"///| Unicode 版本（由生成器探测 `regex` 模块的属性表得到）。\n"
+        f'pub let unicode_version : String = "{unicode_version}"\n'
+        "\n"
+        f"///| 生成这些表的引擎（写进报告，保证可复算）。\n"
+        f'pub let source_engine : String = "regex {regex.__version__}"\n'
         "\n"
     )
+
     body = "\n\n".join(
         [
-            emit("letter_ranges", letters),
-            emit("number_ranges", numbers),
-            emit("whitespace_ranges", spaces),
+            emit_ranges("letter_ranges", letter),
+            emit_ranges("number_ranges", number),
+            emit_ranges("whitespace_ranges", space),
+            f"///| 全码点遍历的冻结校验值：`letter_ranges` 覆盖的码点数。\n"
+            f"pub let letter_total : Int = {total_of(letter)}\n",
+            f"///| 全码点遍历的冻结校验值：`number_ranges` 覆盖的码点数。\n"
+            f"pub let number_total : Int = {total_of(number)}\n",
+            f"///| 全码点遍历的冻结校验值：`whitespace_ranges` 覆盖的码点数。\n"
+            f"pub let whitespace_total : Int = {total_of(space)}\n",
         ]
     )
+    del labels
     return header + body + "\n"
 
 
@@ -128,7 +171,7 @@ def main() -> int:
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(content, encoding="utf-8", newline="\n")
-    print(f"wrote {OUT} ({len(content)} bytes, unicode {unicodedata.unidata_version})")
+    print(f"wrote {OUT} ({len(content)} bytes, unicode {detect_unicode_version()})")
     return 0
 
 

@@ -1,7 +1,8 @@
 // Unicode 表的抽查与"冻结"测试。
 //
 // 冻结断言（版本 + 区间条数）是为了让**表数据漂移一定会红**：
-// 一旦 Unicode 版本或生成配方变了，这里必须显式更新，而不是悄悄通过。
+// 一旦数据源（参考实现所用的 `regex` 引擎，见 tools/gen_unicode.py）升级，
+// 或生成配方变了，这里必须显式更新，而不是悄悄通过。
 
 ///|
 test "letter class" {
@@ -25,7 +26,7 @@ test "number class" {
 }
 
 ///|
-test "whitespace class follows the Unicode White_Space property" {
+test "whitespace class follows the White_Space property" {
   assert_true(is_whitespace(0x20))
   assert_true(is_whitespace(0x09))
   assert_true(is_whitespace(0x0A))
@@ -34,15 +35,17 @@ test "whitespace class follows the Unicode White_Space property" {
   assert_true(is_whitespace(0x3000)) // 全角空格
   // 不是 White_Space 属性：
   assert_false(is_whitespace(0x200B)) // 零宽空格
-  assert_false(is_whitespace(0x1C)) // 文件分隔符（Python 的 isspace 认为是，但属性不是）
+  assert_false(is_whitespace(0x1C)) // 文件分隔符（Python 的 isspace 认为是，属性不是）
 }
 
 ///|
 test "tables are frozen" {
-  // 版本与条数一旦变化必须显式更新（见 tools/gen_unicode.py）
-  assert_eq(unicode_version, "14.0.0")
+  // 数据源是参考实现所用的 `regex` 引擎，所以这里的版本与条数
+  // 就是「参考实现实际看到的 Unicode 类别」的指纹。
+  assert_eq(unicode_version, "17.0.0")
+  assert_eq(source_engine, "regex 2026.9.29")
   let (letters, numbers, spaces) = table_sizes()
-  assert_eq(letters, 648)
-  assert_eq(numbers, 134)
+  assert_eq(letters, 694)
+  assert_eq(numbers, 148)
   assert_eq(spaces, 10)
 }

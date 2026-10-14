@@ -28,8 +28,22 @@ OpenAI tiktoken（MIT License）为**兼容性参照**：
   * tests/golden/sample-vocab.txt、vocab/sample_vocab_wbtest.mbt
       由 tools/gen_sample_vocab.py 确定性生成，随本仓库以 Apache-2.0 发布。
 
+  * tests/golden/sample-plan.txt、tests/golden/sample-plan-overflow.txt、FORMAT.lock
+      由 tools/gen_format_lock.py 从 format_lock_wbtest.mbt 里的冻结串导出，
+      随本仓库以 Apache-2.0 发布。
+
+  * tests/golden/alignment_corpus.txt、alignment_golden_wbtest.mbt、cl100k_slice_wbtest.mbt
+      由 tools/gen_alignment_golden.py 生成：语料为自写，token 标注出自
+      tiktoken 0.14.0 跑 cl100k_base 的结果（MIT，见上）。切片词表只覆盖
+      语料用到的子串，用来在零 IO 的前提下复现同一结果。
+
+  * data/cl100k_base.tiktoken（**不进仓库**，由 tools/fetch_vocab.py 下载）
+      公开词表文件，来源与 sha256 固定在该脚本里。
+
   * bpe/unicode/generated.mbt
       Unicode 属性表（\p{L} / \p{N} / \s 的区间表）由 tools/gen_unicode.py
-      基于 Python unicodedata（Unicode 14.0.0）离线生成。
+      基于 Python regex 模块（Unicode 17.0.0）离线生成。这里刻意不用
+      CPython 的 unicodedata（14.0.0）：参考实现的预切分跑在 regex 的
+      属性表上，只有同源才能逐码点一致。
       Unicode 数据文件受 Unicode, Inc. 的许可约束：
       https://www.unicode.org/license.txt

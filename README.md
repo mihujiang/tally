@@ -93,7 +93,7 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 
 ```text
 # tally-vocab v1
-# unicode 14.0.0
+# unicode 17.0.0
 # tokens 277
 [specials]
 276 PHxlbmRvZnRleHR8Pg==
@@ -103,6 +103,19 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 ```
 
 `load` / `to_text` 满足：`load(to_text(v))` 与 `v` 内容等价，且同一个 `v` 的导出**逐字节稳定**。
+
+### 格式冻结（`FORMAT.lock`）
+
+两种对外文本格式都被逐字节钉死：
+
+| 格式 | 内容 | 冻结在哪 |
+|---|---|---|
+| `tally-vocab v1` | 词表规范文本（`vocab/export.mbt`） | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
+| `tally-plan v1` | 预算计划报告（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan*.txt` |
+
+`FORMAT.lock` 记录每个样本的**字节数与 sha256**；`python tools/gen_format_lock.py --check`
+在样本或指纹对不上时失败。改格式实现会先让 MoonBit 测试变红，改样本会先让 `--check` 变红
+——两条路都不允许「悄悄漂移」。
 
 ## 非目标
 
@@ -116,7 +129,7 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 | 边界 | 说明 |
 |---|---|
 | 预切分模式 | 只实现 cl100k 形状的 7 分支模式；换模式需改扫描器 |
-| Unicode 版本 | 属性表基于 **14.0.0**（`unicode_version()` 可查）；与更新版本的差异为已知边界 |
+| Unicode 版本 | 属性表基于 **17.0.0**（`unicode_version()` 可查）。表由 `tools/gen_unicode.py` 从 `regex` 模块的属性表导出，**与参考实现同一引擎**，因此不是"近似"，而是逐码点一致 |
 | `o200k` 类编码 | 需要 `Lu/Lt/Lm/Lo/M` 类别，未支持（见路线图 V0.8） |
 | 训练 | 尚未实现（路线图 V0.3）；当前词表由 `tools/gen_sample_vocab.py` 确定性生成 |
 | 缓存 | 尚未实现（路线图 V0.4）；当前每次编码都重算 |
@@ -130,13 +143,22 @@ moon check --target js
 moon test  --target wasm-gc
 moon test  --target js
 
-# 夹具与属性表是生成物，改动后要重新生成并提交
-python tools/gen_unicode.py
-python tools/gen_sample_vocab.py
-python tools/gen_sample_vocab.py --check   # CI：夹具是否最新
+# 生成物：改动后重新生成并提交
+python tools/gen_unicode.py            # Unicode 属性表
+python tools/gen_sample_vocab.py       # 测试夹具词表
+python tools/gen_pretoken_golden.py    # 预切分 golden
+python tools/gen_alignment_golden.py   # 逐 token 对齐 golden
+python tools/gen_format_lock.py        # FORMAT.lock 指纹
+
+# CI：生成物 / 指纹对不上就失败
+python tools/gen_unicode.py --check
+python tools/gen_sample_vocab.py --check
+python tools/gen_pretoken_golden.py --check
+python tools/gen_alignment_golden.py --check
+python tools/gen_format_lock.py --check
 ```
 
-当前规模：**6 个包、32 项测试**，`wasm-gc` 与 `js` 双后端全绿。
+当前规模：**6 个包、49 项测试**，`wasm-gc` 与 `js` 双后端全绿。
 
 ## 许可
 
