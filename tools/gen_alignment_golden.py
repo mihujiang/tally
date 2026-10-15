@@ -135,6 +135,35 @@ RAW_BYTES = [
     b"a \n b", b"\n ", b" \n", b"\r\n", b"\t", b"  ", b"a\r\n",
 ]
 
+# Every single byte as its own entry. byte-level BPE guarantees all 256 exist as
+# tokens, and one byte each keeps the slice cost at zero (they are needed anyway).
+RAW_BYTES += [bytes([b]) for b in range(256)]
+
+# The cl100k pattern has seven branches (`bpe/pretoken.mbt`). Robustness *inside*
+# a branch is COVERAGE's job; the failures worth hunting live at the *seams*,
+# where the last character of one piece is the first character of the next. So we
+# take the Cartesian product of short "atoms", each deliberately touching only one
+# or two branches, and get every seam between them. 45 atoms -> 2025 junctions.
+#
+# The atoms are chosen so that each branch appears as both a left and a right
+# operand: branch 1 (contraction suffixes), 2 (optional non-letter prefix +
+# letters), 3 (digits in runs of 1..3), 4 (optional space + punctuation run +
+# trailing newlines), and 5/6/7 (the whitespace/newline branches).
+JUNCTION_ATOMS = [
+    # branch 2: letters, with and without a leading non-letter/non-digit
+    "a", "Z", "word", "Hello", "caf\u00e9", "\u4e2d\u6587", "\u65e5\u672c\u8a9e", "\ud55c\uad6d",
+    # branch 3: digits in runs of 1..3
+    "1", "12", "123", "1234", "007", "2026",
+    # branch 1: contraction suffixes
+    "'s", "'ll", "'ve", "'re", "'d", "'m", "'t",
+    # branch 4: punctuation runs
+    "!", "...", "!!?", "\u2014", ")", "\u201d", "-", "?!",
+    # branches 5/6/7: whitespace and newlines
+    " ", "  ", "\t", "\n", "\r\n", "\r", " \n ", " \t ",
+    # two branches pre-joined, so the product also covers longer seams
+    " a", "1a", "a1", "a!", "!a", " a!", "1\n", "a\n",
+]
+
 
 def build_corpus() -> list[bytes]:
     texts = list(REFERENCE_LITERALS)
@@ -144,8 +173,12 @@ def build_corpus() -> list[bytes]:
 
     texts += LONG_TEXTS
 
-    # Pairwise junctions: pretokenization bugs live at piece boundaries, so
-    # concatenating distinct seeds is where they show up.
+    # Systematic seams: the full product of the atomic branch representatives.
+    texts += [left + right for left in JUNCTION_ATOMS for right in JUNCTION_ATOMS]
+
+    # Pairwise junctions of the *realistic* seeds, kept from the 500-entry corpus:
+    # the atomic product above covers branches in isolation, these cover whole
+    # texts butting against each other.
     seeds = [t for t in texts if t]
     for left in seeds[:50]:
         for right in seeds[50:60]:

@@ -158,7 +158,8 @@ python tools/gen_alignment_golden.py --check
 python tools/gen_format_lock.py --check
 ```
 
-当前规模：**6 个包、49 项测试**，`wasm-gc` 与 `js` 双后端全绿。
+当前规模：**6 个包、49 项测试**，`wasm-gc` 与 `js` 双后端全绿；
+矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）。
 
 ## 许可
 

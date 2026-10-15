@@ -88,10 +88,10 @@ test "matrix C: every byte sequence encodes with no OOV" {
 ///
 /// 这样"双后端一致"就成了一个**可复算**的断言：任何一个后端偏离，
 /// 要么数字对不上，要么 hash 对不上。
-const FROZEN_HASH : UInt = 3502225668U
+const FROZEN_HASH : UInt = 2158777208U
 
 ///|
-const FROZEN_TOKENS : UInt = 21726U
+const FROZEN_TOKENS : UInt = 21701U
 
 ///|
 test "matrix H: backend fingerprint is frozen" {

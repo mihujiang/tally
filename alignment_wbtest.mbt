@@ -7,7 +7,7 @@
 // 词表是 cl100k_base 的「语料切片」：只保留语料可能查到的条目。
 // 之所以成立：byte-level BPE 只合并输入中**相邻**的片段，所以它查的每个键
 // 都是输入的子串；含全部语料子串的切片与完整词表行为一致。生成器在写出
-// 切片之前已逐条验证过这个等价性（654 条语料、10,490 个 token 全部一致）。
+// 切片之前已逐条验证过这个等价性（2,935 条语料、16,273 个 token 全部一致）。
 //
 // 切片内嵌时用**紧凑 id**（参考 id 稀疏，而 `load_tiktoken` 要求 id 连续），
 // 所以这里先把 `encode` 的结果经 `cl100k_slice_real_id` 映回参考 id 再比对。
@@ -59,10 +59,10 @@ test "matrix A: count matches the reference token counts" {
 
 ///|
 test "matrix A: the corpus is the size the plan asked for" {
-  // §3 T3 要求 ≥500 条；这里连切片的规模一起钉住，
+  // V0.2 要求矩阵 A **全量** ≥ 2000 条；这里连切片的规模一起钉住，
   // 免得有人悄悄缩小语料让测试变绿。
-  assert_eq(alignment_corpus.length(), 654)
-  assert_true(alignment_corpus.length() >= 500)
-  assert_eq(cl100k_slice_real_id.length(), 1118)
-  assert_true(cl100k_slice_text.length() > 10000)
+  assert_eq(alignment_corpus.length(), 2935)
+  assert_true(alignment_corpus.length() >= 2000)
+  assert_eq(cl100k_slice_real_id.length(), 1329)
+  assert_true(cl100k_slice_text.length() > 16000)
 }
