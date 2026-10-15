@@ -1,21 +1,10 @@
-# 换行统一：仓库与工作区一律 LF。
-#
-# Windows 上 git 默认 core.autocrlf=true，会把文本文件 checkout 成 CRLF。
-# 本仓库的 FORMAT.lock 与 tests/golden/* 是**逐字节冻结**的产物（sha256 / 逐字节断言），
-# 一旦被 checkout 成 CRLF，tools/gen_format_lock.py --check 就会因为
-# 「生成器写出 LF、工作区是 CRLF」而失败——且只在全新 clone 上复现，最难查。
-# 所以这里显式钉死 eol=lf，不依赖每个开发者本机的 autocrlf 设置。
+# 本项目的核心卖点是「逐字节可复现」：Unicode 属性表、夹具词表与 golden 文件
+# 一旦被 CRLF 改写，tools/*.py --check 与字节一致性测试就会失效。
+# 因此仓库与工作区统一使用 LF。
 * text=auto eol=lf
 
-# 逐字节冻死的产物：git 存的字节 = 生成器写的字节，不做任何换行转换。
+# 逐字节冻死的产物再上一道保险：完全关闭换行转换。
+# eol=lf 只保证 checkout 的结果是 LF；-text 才保证「带 CRLF 的提交」不可能发生，
+# 即 git 里存的字节 = 生成器写出的字节。
 FORMAT.lock     -text
 tests/golden/** -text
-
-# Windows 专用脚本保留 CRLF（PowerShell / cmd 对 LF 的容忍度不值得赌）。
-*.bat text eol=crlf
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
-
-# 二进制
-*.zip binary
-*.png binary
