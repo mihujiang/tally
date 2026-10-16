@@ -6,6 +6,7 @@
 # 冻结的格式：
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
 #   tally-plan  v1   预算计划报告（budget/report.mbt）
+#   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
 # 内容断言在 MoonBit 测试里，改实现先红的是测试，不是这张表。
@@ -14,3 +15,4 @@
 tally-vocab v1 	tests/golden/sample-vocab.txt   	   3529	be797b4c1ea9f4dd35dbc964054ecd9e05df01f0b928177c20d4b7bc479cda72
 tally-plan v1  	tests/golden/sample-plan.txt    	    247	744eef09769176a9b2ca61eccbbedd83292300cc308ee644cfbdd2b1218279e2
 tally-plan v1  	tests/golden/sample-plan-overflow.txt	    193	087c565d3e75bd148009d3ed3fa5f924ce5e783d8f3acbc8ccfd04edd20ec181
+tally-train v1 	tests/golden/sample-train.txt   	    641	b6fe732be81a49f662223bbc55c506f8935b8ced2539c8f1e0fc856c25db8d6f

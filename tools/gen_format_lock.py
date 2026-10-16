@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""生成并校验 `FORMAT.lock`：两种规范文本格式的逐字节指纹。
+"""生成并校验 `FORMAT.lock`：三种规范文本格式的逐字节指纹。
 
-冻结哪两种格式
+冻结哪三种格式
 --------------
 1. `tally-vocab v1` —— 词表规范文本（`# tally-vocab v1` 头部 + `[specials]` +
    `[tokens]` 两个小节，每行 `id rank base64`）。
 2. `tally-plan v1` —— 预算计划报告（`limit/used/pinned/overflow` 四行 +
    `[kept]` + `[dropped]`）。
+3. `tally-train v1` —— 训练产物配方（`# key value` 头部 + `[merges]` +
+   `[specials]`，每行 base64）。
 
 怎么保证不漂移
 --------------
 * **内容断言**在 MoonBit 测试里（`vocab/format_lock_wbtest.mbt`、
-  `format_lock_wbtest.mbt`）：改实现或改期望串，测试先红。
+  `format_lock_wbtest.mbt`、`vocab/train_lock_wbtest.mbt`）：改实现或改期望串，
+  测试先红。
 * **指纹清单**（本脚本产出的 `FORMAT.lock`）给人看、给 CI 比：
   样本文件或期望串被改动却没同步清单，`--check` 就失败。
 
-计划的真实值只有一个来源：`format_lock_wbtest.mbt` 里的冻结串。本脚本把它
-抽出来落成可 diff 的样本文件，再算 sha256 —— 不做第二份真值。
+计划与训练产物的真实值只有一个来源：对应 `*_lock_wbtest.mbt` 里的冻结串。
+本脚本把它们抽出来落成可 diff 的样本文件，再算 sha256 —— 不做第二份真值。
 
 Usage
 -----
@@ -35,9 +38,11 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOCK = ROOT / "FORMAT.lock"
 PLAN_SRC = ROOT / "format_lock_wbtest.mbt"
+TRAIN_SRC = ROOT / "vocab" / "train_lock_wbtest.mbt"
 VOCAB_SAMPLE = ROOT / "tests" / "golden" / "sample-vocab.txt"
 PLAN_SAMPLE = ROOT / "tests" / "golden" / "sample-plan.txt"
 PLAN_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-overflow.txt"
+TRAIN_SAMPLE = ROOT / "tests" / "golden" / "sample-train.txt"
 
 GENERATOR = "tools/gen_format_lock.py"
 
@@ -50,6 +55,7 @@ HEADER = f"""\
 # 冻结的格式：
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
 #   tally-plan  v1   预算计划报告（budget/report.mbt）
+#   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
 # 内容断言在 MoonBit 测试里，改实现先红的是测试，不是这张表。
@@ -58,8 +64,8 @@ HEADER = f"""\
 """
 
 
-def extract_mbt_string(source: str, name: str) -> str:
-    """从 `format_lock_wbtest.mbt` 里抽出 `let <name> : String = "..." + ...`。
+def extract_mbt_string(source: str, name: str, path: pathlib.Path) -> str:
+    """从 `*_lock_wbtest.mbt` 里抽出 `let <name> : String = "..." + ...`。
 
     只认生成器自己写出来的形状：每行一个带引号的片段，末尾跟 `+`，
     最后一行不带 `+`。形状不对就报错，不猜。
@@ -83,21 +89,17 @@ def extract_mbt_string(source: str, name: str) -> str:
         chunks.append(stripped)
         break
     if not chunks:
-        raise SystemExit(f"cannot find {name} in {PLAN_SRC}")
+        raise SystemExit(f"cannot find {name} in {path}")
     # MoonBit 的字符串转义是 JSON 的子集，直接借 json 解析。
     return "".join(json.loads("[" + ",".join(chunks) + "]"))
 
 
-def build_samples() -> tuple[str, str]:
-    source = PLAN_SRC.read_text(encoding="utf-8")
-    return (
-        extract_mbt_string(source, "frozen_plan_mixed"),
-        extract_mbt_string(source, "frozen_plan_overflow"),
-    )
-
-
 def rows() -> list[tuple[str, pathlib.Path, str]]:
-    mixed, overflow = build_samples()
+    plan_src = PLAN_SRC.read_text(encoding="utf-8")
+    train_src = TRAIN_SRC.read_text(encoding="utf-8")
+    mixed = extract_mbt_string(plan_src, "frozen_plan_mixed", PLAN_SRC)
+    overflow = extract_mbt_string(plan_src, "frozen_plan_overflow", PLAN_SRC)
+    trained = extract_mbt_string(train_src, "frozen_train_artifact", TRAIN_SRC)
     if not VOCAB_SAMPLE.exists():
         raise SystemExit(f"missing {VOCAB_SAMPLE}; run tools/gen_sample_vocab.py first")
     return [
@@ -108,6 +110,7 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
         ),
         ("tally-plan v1", PLAN_SAMPLE, mixed),
         ("tally-plan v1", PLAN_OVERFLOW_SAMPLE, overflow),
+        ("tally-train v1", TRAIN_SAMPLE, trained),
     ]
 
 

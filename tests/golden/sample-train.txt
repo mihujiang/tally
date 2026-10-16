@@ -1,0 +1,33 @@
+# tally-train v1
+# unicode 17.0.0
+# corpus_bytes 180
+# corpus_words 43
+# vocab_size 280
+# min_frequency 2
+# tokens 280
+[merges]
+256 MTI= MQ== Mg==
+257 aW4= aQ== bg==
+258 ICA= IA== IA==
+259 IGE= IA== YQ==
+260 MTIz MTI= Mw==
+261 6K8= 6A== rw==
+262 DQo= DQ== Cg==
+263 IGk= IA== aQ==
+264 IHQ= IA== dA==
+265 IHc= IA== dw==
+266 IGFu IGE= bg==
+267 IGFuZA== IGFu ZA==
+268 IHdv IHc= bw==
+269 IHdvcg== IHdv cg==
+270 IHdvcmw= IHdvcg== bA==
+271 IHdvcmxk IHdvcmw= ZA==
+272 ZWw= ZQ== bA==
+273 ZWxs ZWw= bA==
+274 ZWxsbw== ZWxs bw==
+275 aGVsbG8= aA== ZWxsbw==
+276 aW5n aW4= Zw==
+277 huiv hg== 6K8=
+278 huivjQ== huiv jQ==
+[specials]
+279 PHxlbmRvZnRleHR8Pg==

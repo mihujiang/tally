@@ -51,14 +51,18 @@
 
 **完成标准**：`moon test` 双后端全绿，golden 差异为 0。
 
-## V0.3 — 可复现训练
+## V0.3 — 可复现训练 `0.3.0`
 
-- [ ] `vocab/train.mbt`：BPE 训练，含**显式 tie-break 规则**（写进规范文档）
-- [ ] 矩阵 D：同输入两次训练 → 词表**逐字节一致**（≥ 5 组参数组合）
-- [ ] 训练产物格式冻结
-- [ ] 单测：训练 → 导出 → 回读 三段闭环
+- [x] `vocab/train.mbt`：BPE 训练，含**显式 tie-break 规则**（写进规范文档）
+      —— 全序 tie-break：pair 频次降序 → `left` 字节序升序 → `right` 字节序升序（无并列）；
+      训练与编码**共用同一预切分**（`@bpe.pretokenize`），故合并规则与编码天然对齐
+- [x] 矩阵 D：同输入两次训练 → 词表**逐字节一致**（5 组参数组合，含特殊 token 与 `min_frequency` 取 0 / 取大值）
+- [x] 训练产物格式冻结：`tally-train v1` 进 `FORMAT.lock`
+      （`vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt`，`gen_format_lock.py` 抽指纹）
+- [x] 单测：训练 → 导出 → 回读 三段闭环（产物是不动点；回读词表仍可编码且与原词表一致）
+- [x] 门面再导出：`@tally.train` / `@tally.load_train` / `@tally.TrainResult`
 
-**完成标准**：矩阵 D 通过；训练产物可 diff。
+**完成标准**：矩阵 D 通过；训练产物可 diff。 ✅
 
 ## V0.4 — 性能
 
@@ -69,8 +73,8 @@
 ## V0.5 — 格式冻结与硬校验
 
 - [x] 4 类冻结格式（词表 / 训练产物 / 报告 / 统计）各配 `FORMAT.lock`
-      —— 词表与报告两类已在 V0.1 完成（`FORMAT.lock` + 逐字节断言），
-      训练产物与统计两类随本版本补齐
+      —— 词表与报告两类在 V0.1 完成，训练产物在 V0.3 完成
+      （均在 `FORMAT.lock` + 逐字节断言），统计留待本版本补齐
 - [ ] CI 硬校验：格式漂移即失败
 
 ## V0.6 — 预算层深化

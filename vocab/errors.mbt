@@ -19,4 +19,6 @@ pub suberror VocabError {
   SpecialOutOfRange(Int, Int)
   /// 未知的段名
   UnknownSection(String)
+  /// 训练目标词表大小 `vocab_size` 连基座都放不下（256 个单字节 + 特殊 token）
+  TrainSizeTooSmall(Int, Int)
 } derive(Debug)

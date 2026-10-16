@@ -37,3 +37,17 @@ test "facade budget flow" {
   assert_eq(plan.dropped.length(), 1)
   assert_true(unicode_version().length() > 0)
 }
+
+///|
+/// 门面训练闭环：训练 -> 导出产物 -> 回读 -> 词表还能编码，且两次训练一致。
+test "facade reproducible training" {
+  let corpus = [@utf8.encode("hello world"), @utf8.encode("hello 世界")]
+  let a = train(corpus, 280, 1, ["<|endoftext|>"])
+  let b = train(corpus, 280, 1, ["<|endoftext|>"])
+  assert_eq(a.to_text(), b.to_text())
+  let back = load_train(a.to_text())
+  assert_eq(back.vocab.to_text(), a.vocab.to_text())
+  assert_eq(back.merges.length(), a.merges.length())
+  let bytes = @utf8.encode("hello world")
+  assert_eq(back.vocab.encode_bytes(bytes), a.vocab.encode_bytes(bytes))
+}

@@ -8,6 +8,8 @@
 pub using @vocab {
   type Vocab,
   type VocabError,
+  type Merge,
+  type TrainResult,
 }
 
 ///|
@@ -100,4 +102,24 @@ pub fn to_text(v : @vocab.Vocab) -> String {
 /// 生成表所用的 Unicode 版本（用于报告与 README 的可复算声明）。
 pub fn unicode_version() -> String {
   @bpe.unicode_version()
+}
+
+///|
+/// 用 byte-level BPE 训练一份词表：给定语料与参数，两次训练**逐字节一致**。
+///
+/// tie-break 规则（全序，无并列）：pair 频次降序 -> `left` 字节序升序 ->
+/// `right` 字节序升序。规则与实现在 `vocab/train.mbt`。
+pub fn train(
+  corpus : Array[Bytes],
+  vocab_size : Int,
+  min_frequency : Int,
+  specials : Array[String],
+) -> @vocab.TrainResult raise @vocab.VocabError {
+  @vocab.train(corpus, vocab_size, min_frequency, specials)
+}
+
+///|
+/// 回读 `tally-train v1` 训练产物（词表一并重建）。
+pub fn load_train(text : String) -> @vocab.TrainResult raise @vocab.VocabError {
+  @vocab.load_train(text)
 }

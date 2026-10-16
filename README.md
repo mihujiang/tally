@@ -21,7 +21,7 @@ let ids = @tally.encode(v, @utf8.encode("hello world"))  // [259, 264]
 | 层 | 包 | 职责 | 依赖 |
 |---|---|---|---|
 | 算法内核 | `bpe` | 词表无关的 byte-level BPE 编码/解码、预切分扫描器、Unicode 属性表 | 仅 `core` |
-| 词表 | `vocab` | 词表模型、加载（含自写 base64）、规范文本导出 | `bpe` + `core` |
+| 词表 | `vocab` | 词表模型、加载（含自写 base64）、规范文本导出、**可复现 BPE 训练** | `bpe` + `core` |
 | 预算 | `budget` | 上下文装配与截断，输出可解释的丢弃报告 | `bpe` |
 | 门面 | `tally`（根包） | `encode` / `count` / `fit` 的最短路径 | 以上三层 |
 | 工具 | `cmd/main` | CLI（唯一有 IO 的地方） | `x/fs` |
@@ -33,7 +33,7 @@ let ids = @tally.encode(v, @utf8.encode("hello world"))  // [259, 264]
 1. **词表无关的 BPE 框架**——编码器不绑定任何一家词表。同一套算法既吃自带夹具，
    也吃公开词表文件（`.tiktoken` 风格，仅作兼容性输入，其代码一行未搬）。
 2. **可复现的词表训练**——给定语料与参数，两次训练产出**逐字节相同**的词表；
-   合并冲突的 tie-break 规则显式写进规范。（路线图 V0.3）
+   合并冲突的 tie-break 规则显式写进规范。（`vocab/train.mbt`，矩阵 D 覆盖 5 组参数）
 3. **预算化装配（budget-aware assembly）**——把上下文窗口当一等公民：优先级模型、
    截断点选择、以及「丢了哪段、丢了多少 token、为什么是它」的报告。
 4. **自建 Unicode 属性表**（隐性原创点）——`core` 没有 `\p{L}` 等价物，
@@ -66,6 +66,18 @@ fn demo(vocab_text : String, segments : Array[@tally.Segment]) -> Unit raise {
 
   // 上下文装配：按优先级截断 + 可解释的丢弃报告
   println(@tally.fit(v, segments, 4096L).render())
+}
+```
+
+还可以自己训练词表（同输入两次结果逐字节一致）：
+
+```moonbit
+fn train_demo() -> Unit raise {
+  let corpus = [@utf8.encode("hello world"), @utf8.encode("hello 世界")]
+  let result = @tally.train(corpus, 280, 1, ["<|endoftext|>"])
+  println(result.to_text())          // tally-train v1 配方，可 diff、可冻结
+  let back = @tally.load_train(result.to_text())
+  println(@tally.count(back.vocab, "hello world"))
 }
 ```
 
@@ -104,14 +116,39 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 
 `load` / `to_text` 满足：`load(to_text(v))` 与 `v` 内容等价，且同一个 `v` 的导出**逐字节稳定**。
 
+### 训练产物格式
+
+训练产物用自有格式 `tally-train v1` 存**配方**（参数 + 合并序列），词表格式存**展开结果**。
+256 个单字节是隐含基座不落盘；合并按 rank 稠密升序，`id` 一路升序（先 `[merges]` 再 `[specials]`），
+token 表可完全重建：
+
+```text
+# tally-train v1
+# unicode 17.0.0
+# corpus_bytes 180
+# corpus_words 43
+# vocab_size 280
+# min_frequency 2
+# tokens 280
+[merges]
+256 MTI= MQ== Mg==
+...
+[specials]
+279 PHxlbmRvZnRleHR8Pg==
+```
+
+`train -> to_text -> load_train` 是**不动点**：回读出的词表还能编码，且与原词表编码结果一致。
+同一份语料和参数训练两次，产物**逐字节相同**（tie-break 全序：pair 频次降序 → `left` 字节序升序 → `right` 字节序升序）。
+
 ### 格式冻结（`FORMAT.lock`）
 
-两种对外文本格式都被逐字节钉死：
+三种对外文本格式都被逐字节钉死：
 
 | 格式 | 内容 | 冻结在哪 |
 |---|---|---|
 | `tally-vocab v1` | 词表规范文本（`vocab/export.mbt`） | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
 | `tally-plan v1` | 预算计划报告（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan*.txt` |
+| `tally-train v1` | 训练产物配方（`vocab/train_format.mbt`） | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
 
 `FORMAT.lock` 记录每个样本的**字节数与 sha256**；`python tools/gen_format_lock.py --check`
 在样本或指纹对不上时失败。改格式实现会先让 MoonBit 测试变红，改样本会先让 `--check` 变红
@@ -131,7 +168,7 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 | 预切分模式 | 只实现 cl100k 形状的 7 分支模式；换模式需改扫描器 |
 | Unicode 版本 | 属性表基于 **17.0.0**（`unicode_version()` 可查）。表由 `tools/gen_unicode.py` 从 `regex` 模块的属性表导出，**与参考实现同一引擎**，因此不是"近似"，而是逐码点一致 |
 | `o200k` 类编码 | 需要 `Lu/Lt/Lm/Lo/M` 类别，未支持（见路线图 V0.8） |
-| 训练 | 尚未实现（路线图 V0.3）；当前词表由 `tools/gen_sample_vocab.py` 确定性生成 |
+| 训练 | 已实现（`vocab/train.mbt`）：自有格式产物 `tally-train v1`；测试夹具词表仍由 `tools/gen_sample_vocab.py` 确定性生成 |
 | 缓存 | 尚未实现（路线图 V0.4）；当前每次编码都重算 |
 
 ## 开发
@@ -148,7 +185,7 @@ python tools/gen_unicode.py            # Unicode 属性表
 python tools/gen_sample_vocab.py       # 测试夹具词表
 python tools/gen_pretoken_golden.py    # 预切分 golden
 python tools/gen_alignment_golden.py   # 逐 token 对齐 golden
-python tools/gen_format_lock.py        # FORMAT.lock 指纹
+python tools/gen_format_lock.py        # FORMAT.lock 指纹（含 sample-train.txt）
 
 # CI：生成物 / 指纹对不上就失败
 python tools/gen_unicode.py --check
@@ -158,8 +195,9 @@ python tools/gen_alignment_golden.py --check
 python tools/gen_format_lock.py --check
 ```
 
-当前规模：**6 个包、49 项测试**，`wasm-gc` 与 `js` 双后端全绿；
-矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）。
+当前规模：**6 个包、65 项测试**，`wasm-gc` 与 `js` 双后端全绿；
+矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
+矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**。
 
 ## 许可
 
