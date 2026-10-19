@@ -32,6 +32,7 @@ pub using @budget {
 /// 门面包提供这四个构造器，是为了让「只 import `weopqrst/tally`」也能装段：
 /// 枚举构造器 `Pinned` / `Newest` / `Middle` / `Oldest` 无法经 `pub using` 再导出，
 /// 而 `fit` 是主路径，不该逼使用者再依赖 `weopqrst/tally/budget`。
+/// 截断策略同理，见 `truncate_none` / `truncate_tail` / `truncate_head`。
 pub fn pinned(role : String, text : String) -> @budget.Segment {
   @budget.Segment::text(role, @budget.Pinned, text)
 }

@@ -70,7 +70,7 @@
 | V0.3 / 0.3.0 | 全序 tie-break（频次降 → `left` 升 → `right` 升）；`tally-train v1` 冻结；训练→导出→回读为不动点 | 65 测试双后端全绿；2026-10-19 发布 |
 | 0.3.1 | **定位切换为上下文预算引擎**：README / `moon.mod` / CLI 一致；门面补 `pinned`/`newest`/`middle`/`oldest`，单 import 可装配 | 67 测试双后端全绿（含 1 黑盒）；2026-10-19 发布，消费端 `moon run` 复验通过 |
 | 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；2026-10-19 发布，消费端 `moon run` 复验通过 |
-| 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变（v2 输出逐字节不变） |
+| 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变；2026-10-19 发布，注册表 checksum 与本地构建包 sha256 一致，消费端 `moon run` 复验通过 |
 
 ---
 
@@ -146,9 +146,15 @@
 - [x] **CLI 参数校验**：非法 `--truncate` / `--limit` / `--reserve` 直接报错（此前静默回落成 none / 0）。
       已知限制：core 不提供退出码 API，`abort` 会带 JS 栈，所以目前只保证文案清楚、进程仍返回 0
 - [x] README 勘误：`count` → `count_bytes`、错误处理示例、估算语义、格式约束
+- [x] **发布 0.4.1**（2026-10-19，服务端 200 OK；注册表 `checksum=4abb4008…` 与本地
+      `_build/publish/weopqrst-tally-0.4.1.zip` 的 sha256 **完全一致**；消费端 `moon add` 后
+      `estimate` + `with_reserve` + `fit_with_result` + `Err((r, w))` + `plan.excess` 全部可用）
+- [x] 发布后补第 87 项黑盒：锁住 `truncate_none/tail/head` 在**单 import** 下可选。
+      0.4.0 的记录里「单 import 完成 with_strategy」一直只是文字，没有测试；这次探针
+      误用 `@tally.KeepSuffix`（枚举构造器确实不可见，报 4021）才发现要锁的是 `truncate_*`
 
-**完成标准**：`moon test` 双后端全绿（86 项，含 5 黑盒）；`gen_format_lock --check` 通过
-（v2 输出逐字节不变）；`moon info` 中 `budget` 的 import 表不含 `vocab`。
+**完成标准**：`moon test` 双后端全绿（发布时 86 项，含 5 黑盒；补测后 87 项 / 6 黑盒）；
+`gen_format_lock --check` 通过（v2 输出逐字节不变）；`moon info` 中 `budget` 的 import 表不含 `vocab`。
 
 ## V0.5 — 示例与集成 `0.5.0`
 

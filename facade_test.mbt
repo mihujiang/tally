@@ -116,3 +116,45 @@ test "single import can name FitError in a signature" {
   }
   assert_true(raised)
 }
+
+///|
+/// 截断策略的枚举构造器（`@tally.KeepSuffix` 报 4021）无法经 `pub using` 再导出，
+/// 所以门面给了 `truncate_*` 函数——这条路径必须有黑盒测试钉住，
+/// 否则「单 import 即可用截断」只是 ROADMAP 上的一句话。
+test "single import can choose truncation strategy" {
+  let segments = [
+    @tally.pinned("system", "ab"),
+    @tally.newest("user", "0123456789"),
+  ]
+  // truncate_head() = 保留段尾（KeepSuffix）：留下最近的内容
+  let cfg = @tally.fit_config(@tally.estimate(1), 6L).with_strategy(
+    @tally.truncate_head(),
+  )
+  match @tally.fit_with_result(cfg, segments) {
+    Ok(plan) => {
+      assert_eq(plan.kept.length(), 1)
+      assert_eq(plan.truncated.length(), 1)
+      assert_eq(plan.truncated[0].tokens, 4L)
+      assert_eq(plan.tokens_used, 6L)
+      assert_false(plan.overflow)
+    }
+    Err(_) => panic()
+  }
+  // 对照：不截断（默认）时该段整段丢弃
+  match @tally.fit_with_result(
+    @tally.fit_config(@tally.estimate(1), 6L).with_strategy(
+      @tally.truncate_none(),
+    ),
+    segments,
+  ) {
+    Ok(plan) => {
+      assert_eq(plan.truncated.length(), 0)
+      assert_eq(plan.dropped.length(), 1)
+    }
+    Err(_) => panic()
+  }
+  // 三个构造器都能被单 import 的使用者命名
+  let _ = @tally.truncate_tail()
+  let _ = @tally.truncate_none()
+  let _ = @tally.truncate_head()
+}
