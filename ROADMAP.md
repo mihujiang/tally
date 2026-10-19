@@ -71,7 +71,7 @@
 | 0.3.1 | **定位切换为上下文预算引擎**：README / `moon.mod` / CLI 一致；门面补 `pinned`/`newest`/`middle`/`oldest`，单 import 可装配 | 67 测试双后端全绿（含 1 黑盒）；2026-10-19 发布，消费端 `moon run` 复验通过 |
 | 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；2026-10-19 发布，消费端 `moon run` 复验通过 |
 | 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变；2026-10-19 发布，注册表 checksum 与本地构建包 sha256 一致，消费端 `moon run` 复验通过 |
-| 0.5.0 | **示例与集成**：4 个可运行示例（100k→8k 日志、多轮历史、RAG 片段、外部 Counter）、英文 README、GitHub Actions CI；示例输出逐字节入库 | 87 测试双后端全绿；`tools/check_examples.py` 比对 4 示例 + 1 CLI 用例，输出可 diff；CI 工作流覆盖双后端 check/test、5 个 `--check`、示例比对与 `moon package` |
+| 0.5.0 | **示例与集成**：4 个可运行示例（100k→8k 日志、多轮历史、RAG 片段、外部 Counter）、英文 README、GitHub Actions CI；示例输出逐字节入库 | 87 测试双后端全绿；`tools/check_examples.py` 比对 4 示例 + 1 CLI 用例，输出可 diff；CI 在 GitHub 上 14 步全绿（run `39210330467`，commit `e07f759`）；2026-10-19 发布 0.5.0，注册表 `checksum=1fd77b1a…` 与本地构建包 sha256 一致 |
 
 ---
 
@@ -176,10 +176,18 @@
 2. 示例默认读夹具词表（277 token），`--vocab data/cl100k_base.tiktoken` 可换真实词表
    （`data/` 不入库，CI 不依赖它）；
 3. 报告是 `tally-plan v2` 规范文本，所以「可 diff」直接落在字节上，不需要另建断言层；
-4. CI 首次真正运行要等 push 后由 GitHub Actions 执行——工作流本身未经本地 runner 验证。
+4. CI 首次运行**失败在 `golden / format lock`**（run `39210133684`，commit `e4a749e`）：
+   `tools/gen_*.py` 依赖 `regex 2026.9.29` 与 `tiktoken 0.14.0`，`gen_alignment_golden.py`
+   还要 `data/cl100k_base.tiktoken`，工作流两样都没准备。补 `requirements-dev.txt`
+   （golden 里写着 `source_engine` 与 tiktoken 版本，版本一漂移 `--check` 必失败）、
+   `RUNNER_TEMP` 下的独立 venv（规避 ubuntu 的 PEP 668，且不进发布包）、
+   `fetch_vocab.py` 之后，run `39210330467`（commit `e07f759`）14 步全绿。
+   这一步是 0.5 的真正价值：**文档里写的检查，第一次真的被机器执行了**。
 
 **未做（诚实记账）**：
-- CI 未在本地验证过（无 act/runner）；安装步骤用官方 `install/unix.sh`；
+- 线上 0.5.0 包对应 commit `e4a749e`；`e07f759`（CI 修复 + README 两行前置命令 +
+  `requirements-dev.txt`）**没有重发**——差异只在开发依赖与 CI 配置，代码与 API 完全一致。
+  若要「线上包 == 仓库 HEAD」的严格一致，需要 0.5.1；
 - V1.0 的硬条件「被真实项目依赖」仍为 0，不在本版范围内解决。
 
 ## V0.6 — 稳健性与报告冻结 `0.6.0`
