@@ -5,7 +5,7 @@
 #
 # 冻结的格式：
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
-#   tally-plan  v1   预算计划报告（budget/report.mbt）
+#   tally-plan  v2   预算计划报告（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
@@ -13,6 +13,7 @@
 
 [frozen]
 tally-vocab v1 	tests/golden/sample-vocab.txt   	   3529	be797b4c1ea9f4dd35dbc964054ecd9e05df01f0b928177c20d4b7bc479cda72
-tally-plan v1  	tests/golden/sample-plan.txt    	    247	744eef09769176a9b2ca61eccbbedd83292300cc308ee644cfbdd2b1218279e2
-tally-plan v1  	tests/golden/sample-plan-overflow.txt	    193	087c565d3e75bd148009d3ed3fa5f924ce5e783d8f3acbc8ccfd04edd20ec181
+tally-plan v2  	tests/golden/sample-plan.txt    	    315	d7dd9d5b3be1ca3b079fa999cabbf0b613e5a14c8514fea856dbbc329ba9acbe
+tally-plan v2  	tests/golden/sample-plan-overflow.txt	    261	317c0e78e5a7d403982f7bc1d39594b489db6da04cbea75ab88a21f498d66662
+tally-plan v2  	tests/golden/sample-plan-truncated.txt	    186	78b45e9a03b4464202decb31cc4ccbcb551312ec8a12db6a1f4050c3127efadf
 tally-train v1 	tests/golden/sample-train.txt   	    641	b6fe732be81a49f662223bbc55c506f8935b8ced2539c8f1e0fc856c25db8d6f

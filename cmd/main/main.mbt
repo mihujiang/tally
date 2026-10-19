@@ -24,7 +24,7 @@ fn usage() -> Unit {
   println("tally — context budget engine for MoonBit: fit context into a token limit")
   println("")
   println("usage:")
-  println("  tally fit    --vocab <file> --limit <n> [--file <f>]")
+  println("  tally fit    --vocab <file> --limit <n> [--reserve <n>] [--truncate none|tail|head] [--file <f>]")
   println("  tally count  --vocab <file> [--text <s> | --file <f>] [--explain]")
   println("  tally encode --vocab <file> [--text <s> | --file <f>]")
 }
@@ -45,6 +45,8 @@ fn run(args : Array[String]) -> Unit raise {
   let mut text : String? = None
   let mut file : String? = None
   let mut limit : Int64 = 0
+  let mut reserve : Int64 = 0L
+  let mut truncate_mode = "none"
   let mut explain = false
   let mut i = 0
   while i < args.length() {
@@ -64,6 +66,12 @@ fn run(args : Array[String]) -> Unit raise {
       i = i + 2
     } else if a == "--limit" && has_next {
       limit = parse_i64(args[i + 1])
+      i = i + 2
+    } else if a == "--reserve" && has_next {
+      reserve = parse_i64(args[i + 1])
+      i = i + 2
+    } else if a == "--truncate" && has_next {
+      truncate_mode = args[i + 1]
       i = i + 2
     } else if a == "--explain" {
       explain = true
@@ -119,7 +127,12 @@ fn run(args : Array[String]) -> Unit raise {
     }
     "fit" => {
       let limit = if limit <= 0L { 4096L } else { limit }
-      // MVP：把输入整体视为一段 Newest 段，演示装配与丢弃报告。
+      let strategy = match truncate_mode {
+        "tail" => @tally.truncate_tail()
+        "head" => @tally.truncate_head()
+        _ => @tally.truncate_none()
+      }
+      // MVP：把输入整体视为一段 Newest 段，演示装配、截断与丢弃报告。
       let segments = [
         @budget.Segment::text(
           "system",
@@ -128,8 +141,11 @@ fn run(args : Array[String]) -> Unit raise {
         ),
         @budget.Segment::new("payload", @budget.Newest, input_bytes),
       ]
-      let plan = @tally.fit(vocab, segments, limit)
-      println(plan.render())
+      let cfg = @tally
+        .fit_config(@tally.cl100k(vocab), limit + reserve)
+        .with_reserve(reserve)
+        .with_strategy(strategy)
+      println(@tally.fit_with(cfg, segments).render())
     }
     _ => usage()
   }

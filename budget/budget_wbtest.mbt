@@ -77,7 +77,230 @@ test "report is canonical and stable (V15)" {
   let a = plan.render()
   let b = plan.render()
   assert_eq(a, b)
-  assert_true(a.contains("tally-plan v1"))
+  assert_true(a.contains("tally-plan v2"))
+  assert_true(a.contains("counter cl100k_base exact=true"))
   assert_false(plan.overflow)
   assert_eq(plan.dropped.length(), 0)
+}
+
+///|
+/// 计数器自带身份与「精不精确」，这是报告可追的前提。
+test "counters expose identity and exactness" {
+  let v = byte_vocab()
+  let exact = Counter::cl100k(v)
+  assert_true(exact.exact)
+  assert_eq(exact.name, "cl100k_base")
+  assert_eq(exact.count(@utf8.encode("abcdef")), 6L)
+  let est = Counter::estimate(4)
+  assert_false(est.exact)
+  assert_eq(est.name, "estimate@4")
+  assert_eq(est.count(@utf8.encode("abcdefgh")), 2L)
+  // 向上取整：5 个字符 / 4 = 2
+  assert_eq(est.count(@utf8.encode("abcde")), 2L)
+  // 非法参数回落默认值，不抛错
+  assert_eq(Counter::estimate(0).name, "estimate@4")
+}
+
+///|
+/// 估算计数器必须自曝：报告里 `exact=false`，不允许冒充精确。
+test "estimate counter is marked inexact in report" {
+  let segments = [Segment::text("payload", Newest, "abcdefgh")]
+  let plan = fit_with(FitConfig::new(Counter::estimate(4), 4L), segments)
+  assert_false(plan.exact)
+  assert_true(plan.render().contains("counter estimate@4 exact=false"))
+}
+
+///|
+/// 窗口模型：`window = reserve + input_limit`，预留不占输入预算。
+test "reserve shrinks the input limit" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("payload", Newest, "abcdefghij"),
+  ]
+  let cfg = FitConfig::new(Counter::cl100k(v), 8L).with_reserve(2L)
+  let plan = fit_with(cfg, segments)
+  assert_eq(plan.window, 8L)
+  assert_eq(plan.reserve, 2L)
+  assert_eq(plan.limit, 6L)
+  // 默认策略是整段丢：10 token 的 payload 放不进 6，直接丢，只剩 Pinned 的 3
+  assert_eq(plan.tokens_used, 3L)
+  assert_eq(plan.dropped.length(), 1)
+  assert_true(plan.render().contains("input_limit 6"))
+}
+
+///|
+/// 预留吃掉整个窗口时显式报错，而不是把可用空间算成负数。
+test "reserve that swallows the window is rejected" {
+  let v = byte_vocab()
+  let cfg = FitConfig::new(Counter::cl100k(v), 8L).with_reserve(8L)
+  let mut bad = true
+  try {
+    let _ = fit_with(cfg, [])
+  } catch {
+    ReserveExceedsWindow(r, w) => {
+      assert_eq(r, 8L)
+      assert_eq(w, 8L)
+      bad = false
+    }
+  }
+  assert_false(bad)
+}
+
+///|
+/// 截断：保留段首，装到刚好等于预算；截断量与原量都写进报告。
+test "truncate keeps the prefix and lands on the limit" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("payload", Newest, "0123456789"),
+  ]
+  let plan = fit_with(
+    FitConfig::new(Counter::cl100k(v), 8L).with_strategy(KeepPrefix),
+    segments,
+  )
+  assert_eq(plan.tokens_used, 8L)
+  assert_eq(plan.kept.length(), 1)
+  assert_eq(plan.truncated.length(), 1)
+  assert_eq(plan.dropped.length(), 0)
+  let t = plan.truncated[0]
+  assert_eq(t.original_tokens, 10L)
+  assert_eq(t.tokens, 5L)
+  assert_eq(t.strategy, KeepPrefix)
+  assert_eq(t.bytes, @utf8.encode("01234"))
+  assert_true(plan.render().contains("1 newest payload 10->5 prefix"))
+}
+
+///|
+/// 截断：保留段尾，适合「最近最重要」的历史。
+test "truncate keeps the suffix" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("payload", Newest, "0123456789"),
+  ]
+  let plan = fit_with(
+    FitConfig::new(Counter::cl100k(v), 8L).with_strategy(KeepSuffix),
+    segments,
+  )
+  assert_eq(plan.tokens_used, 8L)
+  let t = plan.truncated[0]
+  assert_eq(t.tokens, 5L)
+  assert_eq(t.strategy, KeepSuffix)
+  assert_eq(t.bytes, @utf8.encode("56789"))
+  assert_true(plan.render().contains("1 newest payload 10->5 suffix"))
+}
+
+///|
+/// 截断不切半个字符：中文 3 字节一个，切点回退到字符边界。
+test "truncation respects UTF-8 boundaries" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("payload", Newest, "世界"),
+  ]
+  let plan = fit_with(
+    FitConfig::new(Counter::cl100k(v), 6L).with_strategy(KeepPrefix),
+    segments,
+  )
+  let t = plan.truncated[0]
+  assert_eq(t.tokens, 3L)
+  assert_eq(t.bytes, @utf8.encode("世"))
+  assert_eq(plan.tokens_used, 6L)
+}
+
+///|
+/// 截不动（目标为 0）时退化为整段丢：只要「丢弃」这一种解释。
+test "truncation falls back to dropping when nothing fits" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("payload", Newest, "abcdefghij"),
+  ]
+  let plan = fit_with(
+    FitConfig::new(Counter::cl100k(v), 3L).with_strategy(KeepPrefix),
+    segments,
+  )
+  assert_eq(plan.truncated.length(), 0)
+  assert_eq(plan.dropped.length(), 1)
+  assert_eq(plan.dropped[0].tokens, 10L)
+  assert_eq(plan.tokens_used, 3L)
+}
+
+///|
+/// 矩阵 G：任意 limit × 任意策略 × 若干段落形状，不变量都必须成立。
+///
+/// 覆盖：`used` 恒等于 kept+truncated 之和；不溢出时 `used <= limit`；
+/// Pinned 段永不截断；渲染可重复。
+test "matrix G: invariants hold across limits and strategies" {
+  let v = byte_vocab()
+  let counter = Counter::cl100k(v)
+  let strategies = [NoTruncate, KeepPrefix, KeepSuffix]
+  let shapes = [
+    [
+      Segment::text("system", Pinned, "sys"),
+      Segment::text("old", Oldest, "abc"),
+      Segment::text("new", Newest, "defgh"),
+    ],
+    [
+      Segment::text("system", Pinned, "sys"),
+      Segment::text("user", Newest, "0123456789abcdef"),
+    ],
+    [Segment::text("only", Middle, "abcdef")],
+    [
+      Segment::text("system", Pinned, "sys"),
+      Segment::text("tools", Pinned, "ab"),
+      Segment::text("user", Newest, "世界你好"),
+    ],
+  ]
+  let mut cases = 0
+  for shape in shapes {
+    for strategy in strategies {
+      for limit = 1; limit <= 14; limit = limit + 1 {
+        let cfg = FitConfig::new(counter, limit.to_int64()).with_strategy(
+          strategy,
+        )
+        let plan = fit_with(cfg, shape)
+        cases = cases + 1
+        let mut used : Int64 = 0
+        for k in plan.kept {
+          used = used + k.tokens
+        }
+        for t in plan.truncated {
+          used = used + t.tokens
+        }
+        assert_eq(plan.tokens_used, used)
+        if !plan.overflow {
+          assert_true(plan.tokens_used <= plan.limit)
+        }
+        // Pinned 段只可能整段保留，绝不截断
+        for k in plan.kept {
+          if k.priority == Pinned {
+            assert_eq(k.tokens, counter.count(k.bytes))
+          }
+        }
+        for t in plan.truncated {
+          assert_true(t.priority != Pinned)
+          assert_true(t.tokens < t.original_tokens)
+          assert_true(t.tokens > 0L)
+        }
+        assert_eq(plan.render(), plan.render())
+      }
+    }
+  }
+  assert_true(cases >= 40)
+}
+
+///|
+/// 0.3 入口与新入口同语义：除调用方式外输出逐字节相同。
+test "compat fit equals explicit config" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("old", Oldest, "abc"),
+    Segment::text("new", Newest, "defgh"),
+  ]
+  let a = fit(v, segments, 6L)
+  let b = fit_with(FitConfig::new(Counter::cl100k(v), 6L), segments)
+  assert_eq(a.render(), b.render())
 }

@@ -69,6 +69,7 @@
 | V0.2 / 0.2.0 | 矩阵 A 全量 **2,935 条 / 16,273 token**（tiktoken 0.14.0 标注）；往返 550 组；无 OOV | golden 入库带参考版本号 |
 | V0.3 / 0.3.0 | 全序 tie-break（频次降 → `left` 升 → `right` 升）；`tally-train v1` 冻结；训练→导出→回读为不动点 | 65 测试双后端全绿；2026-10-19 发布 |
 | 0.3.1 | **定位切换为上下文预算引擎**：README / `moon.mod` / CLI 一致；门面补 `pinned`/`newest`/`middle`/`oldest`，单 import 可装配 | 67 测试双后端全绿（含 1 黑盒）；2026-10-19 发布，消费端 `moon run` 复验通过 |
+| 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 81 测试双后端全绿（含 2 黑盒）；矩阵 G 168 组不变量通过；本地完成，待发布 |
 
 ---
 
@@ -101,16 +102,24 @@
 
 **目标**：把 `budget` 从「按优先级丢段的雏形」变成真正的引擎，并解耦 tokenizer。
 
-- [ ] **`Counter`**：`{ name, exact, count }`，`budget` 只依赖它，不再依赖 `Vocab`
-- [ ] 内置 `Counter::cl100k(v : Vocab)`，结果与原 `count_bytes` 逐 token 相等
-- [ ] **窗口模型**：`window = reserve_output + input_limit`，预留放不下时显式报错
-- [ ] **截断策略可插拔**：`DropWhole`（现状）/ `TruncateTail` / `TruncateHead` / `KeepNewestN`
-- [ ] **Pinned 原子性**：永不裁；超限给可操作诊断而不是静默越界
-- [ ] **报告 v2（`tally-plan v2`）**：记录 counter 身份（name/exact）、每段动作（kept/truncated/dropped）、截断量
-- [ ] 向后兼容：`fit(v, segments, limit)` 保留为 shim，内部转 `Counter::cl100k`
-- [ ] 矩阵 G ≥ 40 组：`≤ limit`、Pinned 不丢、UTF-8 合法、报告可解释
+- [x] **`Counter`**：`{ name, exact, count_bytes }`，`budget` 只依赖它，不再依赖 `Vocab`（`budget/counter.mbt`）
+- [x] 内置 `Counter::cl100k(v : Vocab)`，结果与原 `count_bytes` 逐 token 相等；另有 `Counter::estimate(n)`
+      标注 `exact=false`，估算不允许冒充精确
+- [x] **窗口模型**：`window = reserve_output + input_limit`，`reserve >= window` 时 `raise ReserveExceedsWindow`
+- [x] **截断策略**：`NoTruncate` / `KeepPrefix`（保留段首）/ `KeepSuffix`（保留段尾、即「最近优先」）。
+      **不做** `KeepNewestN`：N 段保留属于会话策略，不是字节层职责，留给 V0.5 示例层
+- [x] **Pinned 原子性**：永不裁；超限给可操作诊断而不是静默越界
+- [x] **报告 v2（`tally-plan v2`）**：记录 counter 身份（name/exact）、每段动作（kept/truncated/dropped）、截断量
+- [x] 向后兼容：`fit(v, segments, limit)` 保留为 shim，语义等同 `fit_with(FitConfig::new(cl100k, limit))`
+- [x] 矩阵 G：3 策略 × 4 段落形状 × limit 1..14 = 168 组，校验 used 守恒、`<= limit`、Pinned 不裁、截断量合法、渲染可复现
 
-**完成标准**：`moon test` 双后端全绿；同一输入经 shim 与新 API 得到逐字节相同的 `tally-plan`（只剩版本头不同）。
+**完成标准**：`moon test` 双后端全绿（81 项）；shim 与新 API 的 `tally-plan` **逐字节相同**（`compat fit equals explicit config`）。
+
+**实现说明（与原计划的三处偏离）**：
+1. 策略名从 `TruncateTail/TruncateHead` 改为 `KeepPrefix/KeepSuffix`——原命名描述「砍哪头」，
+   新命名描述「留哪头」，读调用点时不歧义；
+2. 截断不需要 `encode`：切点靠 `Counter` 二分字节长度得到，因此**外部 tokenizer 也能被截断**；
+3. `KeptSegment` / `TruncatedSegment` 现在直接带 `bytes`——否则「截短」只会计账、给不出可用内容。
 
 ## V0.5 — 示例与集成 `0.5.0`
 
@@ -125,7 +134,8 @@
 
 - [ ] 矩阵 I：随机字节喂 `encode` / `load` 不 panic（≥ 600 条）
 - [ ] 矩阵 J：词表 / 训练产物 / 报告改一个字节即校验失败并给位置（≥ 20 条）
-- [ ] 第 4 类格式（`tally-plan v2`）进 `FORMAT.lock`，生成器 `--check` 硬校验
+- [x] 第 4 类格式（`tally-plan v2`）进 `FORMAT.lock`，生成器 `--check` 硬校验 —— 已在 0.4.0 提前完成
+      （`tests/golden/sample-plan{,-overflow,-truncated}.txt` 三份样本）
 - [ ] 错误信息带位置与上下文（不逐字冻结）
 
 **完成标准**：双后端 fuzz 0 panic；6 个生成器 `--check` 差异 0。

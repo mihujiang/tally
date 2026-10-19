@@ -5,8 +5,9 @@
 --------------
 1. `tally-vocab v1` —— 词表规范文本（`# tally-vocab v1` 头部 + `[specials]` +
    `[tokens]` 两个小节，每行 `id rank base64`）。
-2. `tally-plan v1` —— 预算计划报告（`limit/used/pinned/overflow` 四行 +
-   `[kept]` + `[dropped]`）。
+2. `tally-plan v2` —— 预算计划报告（`counter` / `window` / `reserve` /
+   `input_limit` / `used` / `pinned` / `overflow` 七行 +
+   `[kept]` + `[truncated]` + `[dropped]` 三节）。
 3. `tally-train v1` —— 训练产物配方（`# key value` 头部 + `[merges]` +
    `[specials]`，每行 base64）。
 
@@ -42,6 +43,7 @@ TRAIN_SRC = ROOT / "vocab" / "train_lock_wbtest.mbt"
 VOCAB_SAMPLE = ROOT / "tests" / "golden" / "sample-vocab.txt"
 PLAN_SAMPLE = ROOT / "tests" / "golden" / "sample-plan.txt"
 PLAN_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-overflow.txt"
+PLAN_TRUNCATED_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-truncated.txt"
 TRAIN_SAMPLE = ROOT / "tests" / "golden" / "sample-train.txt"
 
 GENERATOR = "tools/gen_format_lock.py"
@@ -54,7 +56,7 @@ HEADER = f"""\
 #
 # 冻结的格式：
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
-#   tally-plan  v1   预算计划报告（budget/report.mbt）
+#   tally-plan  v2   预算计划报告（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
@@ -99,6 +101,7 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
     train_src = TRAIN_SRC.read_text(encoding="utf-8")
     mixed = extract_mbt_string(plan_src, "frozen_plan_mixed", PLAN_SRC)
     overflow = extract_mbt_string(plan_src, "frozen_plan_overflow", PLAN_SRC)
+    truncated = extract_mbt_string(plan_src, "frozen_plan_truncated", PLAN_SRC)
     trained = extract_mbt_string(train_src, "frozen_train_artifact", TRAIN_SRC)
     if not VOCAB_SAMPLE.exists():
         raise SystemExit(f"missing {VOCAB_SAMPLE}; run tools/gen_sample_vocab.py first")
@@ -108,8 +111,9 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
             VOCAB_SAMPLE,
             VOCAB_SAMPLE.read_text(encoding="utf-8"),
         ),
-        ("tally-plan v1", PLAN_SAMPLE, mixed),
-        ("tally-plan v1", PLAN_OVERFLOW_SAMPLE, overflow),
+        ("tally-plan v2", PLAN_SAMPLE, mixed),
+        ("tally-plan v2", PLAN_OVERFLOW_SAMPLE, overflow),
+        ("tally-plan v2", PLAN_TRUNCATED_SAMPLE, truncated),
         ("tally-train v1", TRAIN_SAMPLE, trained),
     ]
 

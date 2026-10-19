@@ -1,9 +1,13 @@
-tally-plan v1
-limit 1
+tally-plan v2
+counter cl100k_base exact=true
+window 1
+reserve 0
+input_limit 1
 used 3
 pinned 3
 overflow true
 [kept]
 0 pinned system 3
+[truncated]
 [dropped]
 -1 pinned *overflow* 2 Pinned 段本身超过 limit；请增大窗口或缩短 system 提示/工具定义

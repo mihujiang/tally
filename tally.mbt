@@ -17,8 +17,12 @@ pub using @budget {
   type Priority,
   type Segment,
   type KeptSegment,
+  type TruncatedSegment,
   type DroppedSegment,
   type Plan,
+  type Counter,
+  type FitConfig,
+  type TruncateStrategy,
 }
 
 ///|
@@ -86,7 +90,52 @@ pub fn piece_counts(v : @vocab.Vocab, bytes : Bytes) -> Array[(String, Int64)] {
 }
 
 ///|
-/// 装配上下文：按优先级截断，并给出可解释的丢弃报告。
+/// 精确计数器：给定词表时逐 token 计数。
+pub fn cl100k(v : @vocab.Vocab) -> @budget.Counter {
+  @budget.Counter::cl100k(v)
+}
+
+///|
+/// 估算计数器：`chars_per_token` 个字符当 1 token。报告里会标 `exact=false`。
+pub fn estimate(chars_per_token : Int) -> @budget.Counter {
+  @budget.Counter::estimate(chars_per_token)
+}
+
+///|
+/// 装配配置：整窗可用、整段丢弃。用 `.with_reserve(..)` / `.with_strategy(..)` 调整。
+pub fn fit_config(counter : @budget.Counter, window : Int64) -> @budget.FitConfig {
+  @budget.FitConfig::new(counter, window)
+}
+
+///|
+/// 整段丢弃（默认）。
+pub fn truncate_none() -> @budget.TruncateStrategy {
+  @budget.NoTruncate
+}
+
+///|
+/// 保留段首、截掉段尾（`system` 提示这类开头最重要的内容）。
+pub fn truncate_tail() -> @budget.TruncateStrategy {
+  @budget.KeepPrefix
+}
+
+///|
+/// 保留段尾、截掉段首（历史/日志这类最近内容最重要的段）。
+pub fn truncate_head() -> @budget.TruncateStrategy {
+  @budget.KeepSuffix
+}
+
+///|
+/// 装配上下文：按优先级丢段/截短，并给出可解释的报告。
+pub fn fit_with(
+  cfg : @budget.FitConfig,
+  segments : Array[@budget.Segment],
+) -> @budget.Plan raise @budget.FitError {
+  @budget.fit_with(cfg, segments)
+}
+
+///|
+/// 装配上下文：按优先级整段丢弃（0.3 的兼容入口）。
 pub fn fit(
   v : @vocab.Vocab,
   segments : Array[@budget.Segment],

@@ -54,6 +54,45 @@ test "facade segment constructors" {
 }
 
 ///|
+/// 门面窗口模型与截断：`window = reserve + input_limit`，超出的段按策略截短。
+test "facade window and truncation" {
+  let v = byte_vocab()
+  let segments = [
+    pinned("system", "sys"),
+    newest("payload", "0123456789"),
+  ]
+  let cfg = fit_config(cl100k(v), 8L)
+    .with_reserve(2L)
+    .with_strategy(truncate_tail())
+  let plan = try {
+    fit_with(cfg, segments)
+  } catch {
+    _ => panic()
+  }
+  assert_eq(plan.window, 8L)
+  assert_eq(plan.reserve, 2L)
+  assert_eq(plan.limit, 6L)
+  assert_eq(plan.tokens_used, 6L)
+  assert_eq(plan.truncated.length(), 1)
+  assert_eq(plan.truncated[0].original_tokens, 10L)
+  assert_eq(plan.truncated[0].tokens, 3L)
+  assert_eq(plan.truncated[0].bytes, @utf8.encode("012"))
+}
+
+///|
+/// 估算计数器经门面同样自曝：`exact=false` 进报告。
+test "facade estimate counter is honest" {
+  let segments = [newest("payload", "abcdefgh")]
+  let plan = try {
+    fit_with(fit_config(estimate(4), 4L), segments)
+  } catch {
+    _ => panic()
+  }
+  assert_false(plan.exact)
+  assert_true(plan.render().contains("counter estimate@4 exact=false"))
+}
+
+///|
 /// 门面训练闭环：训练 -> 导出产物 -> 回读 -> 词表还能编码，且两次训练一致。
 test "facade reproducible training" {
   let corpus = [@utf8.encode("hello world"), @utf8.encode("hello 世界")]
