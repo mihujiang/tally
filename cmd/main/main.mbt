@@ -21,12 +21,12 @@ fn parse_i64(s : String) -> Int64 {
 
 ///|
 fn usage() -> Unit {
-  println("tally — precise tokenization and context budgeting for MoonBit")
+  println("tally — context budget engine for MoonBit: fit context into a token limit")
   println("")
   println("usage:")
+  println("  tally fit    --vocab <file> --limit <n> [--file <f>]")
   println("  tally count  --vocab <file> [--text <s> | --file <f>] [--explain]")
   println("  tally encode --vocab <file> [--text <s> | --file <f>]")
-  println("  tally fit    --vocab <file> --limit <n> [--file <f>]")
 }
 
 ///|

@@ -39,6 +39,21 @@ test "facade budget flow" {
 }
 
 ///|
+/// 只走门面构造器（`pinned` / `oldest`）也应完成装配：
+/// 外部使用者只有一个 import 时，必须能自己把段建出来。
+test "facade segment constructors" {
+  let v = byte_vocab()
+  let segments = [
+    pinned("system", "sys"),
+    oldest("history", "0123456789"),
+  ]
+  let plan = fit(v, segments, 5L)
+  assert_eq(plan.tokens_used, 3L)
+  assert_false(plan.overflow)
+  assert_eq(plan.dropped.length(), 1)
+}
+
+///|
 /// 门面训练闭环：训练 -> 导出产物 -> 回读 -> 词表还能编码，且两次训练一致。
 test "facade reproducible training" {
   let corpus = [@utf8.encode("hello world"), @utf8.encode("hello 世界")]

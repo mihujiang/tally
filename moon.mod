@@ -3,7 +3,7 @@
 
 name = "weopqrst/tally"
 
-version = "0.3.0"
+version = "0.3.1"
 
 readme = "README.md"
 
@@ -11,11 +11,11 @@ repository = "https://github.com/mihujiang/tally"
 
 license = "Apache-2.0"
 
-keywords = ["tokenizer", "bpe", "llm", "unicode", "context"]
+keywords = ["context-window", "budget", "truncation", "tokenizer", "llm"]
 
 preferred_target = "wasm-gc"
 
-description = "Byte-level BPE tokenization and context budgeting with reproducible, byte-exact results."
+description = "Context-budget engine for MoonBit LLM apps: exact token counting, priority-based assembly, and explainable, reproducible drop reports."
 
 // 只有卫星包（cmd/main）使用 x/fs 做 IO；核心包零第三方依赖。
 import {

@@ -1,18 +1,36 @@
 # tally
 
-> **精确的分词与上下文预算**——把「猜 token」变成「数 token」。
+> **MoonBit 的上下文预算引擎**——把任意长度的上下文精确压进 token 预算，并告诉你丢了什么、为什么。
 
-MoonBit 的 LLM 应用里，token 数通常靠「字符数 ÷ 常数」估算，误差可达 30%+。
-`tally` 提供可以**逐 token 对齐参考实现**、**离线复算**、**跨后端字节一致**的精确值，
-并在此之上回答「上下文放不下时，该丢哪一段、为什么」。
+上下文塞不进窗口是 agent 的必然事件，不是边界情况。常见做法是「字符数 ÷ 4」估算、再按长度硬切：切在半个 JSON 或半个工具调用中间，事后也无法解释为什么留下这一段、丢掉那一段。
+
+`tally` 做三件事，每一件都可核对：
+
+1. **精确计数**：cl100k 形状的 byte-level BPE，2,935 条语料与 `tiktoken 0.14.0` 逐 token 对齐，差异 0。
+2. **可解释装配**：按 `Priority` 把段落装进窗口，`Pinned` 永不裁，输出「丢了哪段、多少 token、为什么」。
+3. **可复现**：词表与报告都是规范文本，格式被 `FORMAT.lock` 逐字节钉死，改一个字节测试就红。
 
 ```moonbit
-let v = @tally.load(vocab_text)          // 词表只加载一次，之后不可变
-let n = @tally.count(v, "hello world")   // 精确 token 数：2
-let ids = @tally.encode(v, @utf8.encode("hello world"))  // [259, 264]
+let segments = [
+  @tally.pinned("system", "you are a helpful assistant."),   // 永不裁
+  @tally.oldest("history", "...前 50 轮..."),                 // 最先牺牲
+  @tally.newest("user", "现在的问题"),
+]
+let plan = @tally.fit(v, segments, 8192L)   // 装进 8k 窗口
+println(plan.render())                       // 逐段列出 kept / dropped 与原因
 ```
 
----
+分词（`encode` / `decode` / `count`）是这套东西的**底座**：它保证预算层拿到的是精确数，而不是估算。
+
+## 五个问题，一个引擎
+
+| # | 问题 | tally 的回答 |
+|---|---|---|
+| 1 | 这段输入到底多少 token？ | `count` / `piece_counts`，精确计数而非估算 |
+| 2 | 装不下的部分，牺牲谁？ | `Priority`：`Oldest` → `Middle` → `Newest`；权重相同时丢更早的历史 |
+| 3 | 哪些绝对不能动？ | `Pinned`（system 提示、工具定义）优先保全；仍装不下时显式 `overflow` 并给可操作建议 |
+| 4 | 为什么是这个结果？ | `Plan::render()`：每段一行，`kept` / `dropped` + 原因 |
+| 5 | 能复现、能 diff 吗？ | `tally-plan v1` 规范文本，进 `FORMAT.lock` 指纹 |
 
 ## 它是什么
 
@@ -21,55 +39,66 @@ let ids = @tally.encode(v, @utf8.encode("hello world"))  // [259, 264]
 | 层 | 包 | 职责 | 依赖 |
 |---|---|---|---|
 | 算法内核 | `bpe` | 词表无关的 byte-level BPE 编码/解码、预切分扫描器、Unicode 属性表 | 仅 `core` |
-| 词表 | `vocab` | 词表模型、加载（含自写 base64）、规范文本导出、**可复现 BPE 训练** | `bpe` + `core` |
-| 预算 | `budget` | 上下文装配与截断，输出可解释的丢弃报告 | `bpe` |
-| 门面 | `tally`（根包） | `encode` / `count` / `fit` 的最短路径 | 以上三层 |
+| 词表 | `vocab` | 词表模型、加载（含自写 base64）、规范文本导出、可复现 BPE 训练 | `bpe` + `core` |
+| **预算（产品本体）** | `budget` | **上下文装配与截断，输出可解释、可冻结的丢弃报告** | `bpe` |
+| 门面 | `tally`（根包） | `fit` / `encode` / `count` 的最短路径 | 以上三层 |
 | 工具 | `cmd/main` | CLI（唯一有 IO 的地方） | `x/fs` |
 
 **核心包零第三方依赖**；`moonbitlang/x` 只被 `cmd/main` 用于读写文件。
 
-## 设计目标（每条都有代码与测试对应）
+## 与 `tokenizers-moonbit` 的分工
 
-1. **词表无关的 BPE 框架**——编码器不绑定任何一家词表。同一套算法既吃自带夹具，
-   也吃公开词表文件（`.tiktoken` 风格，仅作兼容性输入，其代码一行未搬）。
-2. **可复现的词表训练**——给定语料与参数，两次训练产出**逐字节相同**的词表；
-   合并冲突的 tie-break 规则显式写进规范。（`vocab/train.mbt`，矩阵 D 覆盖 5 组参数）
-3. **预算化装配（budget-aware assembly）**——把上下文窗口当一等公民：优先级模型、
-   截断点选择、以及「丢了哪段、丢了多少 token、为什么是它」的报告。
-4. **自建 Unicode 属性表**（隐性原创点）——`core` 没有 `\p{L}` 等价物，
-   因此属性表由 `tools/gen_unicode.py` 离线生成并冻结，既是工作量也是「从零实现」的物证。
+两者不是替代关系，轴不同：
+
+| | `tokenizers-moonbit` | tally |
+|---|---|---|
+| 轴 | 广度：5 种算法、39 个模型、对接 HF | 收口：固定 cl100k，把预算做透 |
+| 与参考实现对齐 | Python `tokenizers` 0.22.2 | `tiktoken` 0.14.0 |
+| 训练 | BPE / WordPiece / Unigram（跟随 HF 语义） | 只用 BPE，全序 tie-break，两次训练逐字节一致 |
+| 预算层 | 无 | `Priority` / `Pinned` / 丢弃报告 / 格式冻结 |
+| 适合 | 要多模型、WordPiece、Unigram、native | 要「装进窗口并解释」 |
+
+需要通用分词器时用它；需要把上下文压进预算并留下可审计记录时用 tally。
+0.4.0 起 `budget` 将改为依赖 `Counter` 接口而非具体词表，届时可以直接用它的分词结果驱动本包的装配（计划，尚未实现）。
 
 ## 快速开始
 
 ### 作为库
 
 ```powershell
-moon add weopqrst/tally   # 发布到 mooncakes 后可用
+moon add weopqrst/tally
 ```
 
 ```moonbit
-fn demo(vocab_text : String, segments : Array[@tally.Segment]) -> Unit raise {
+fn demo(vocab_text : String) -> Unit raise {
   // 加载词表（自有规范文本格式，见下）；加载后不可变
   let v = @tally.load(vocab_text)
 
-  // 精确计数
+  // 1) 预算装配：主路径。按优先级装进 4096，给出丢弃报告
+  //    四个构造器都在门面包里，只 import `weopqrst/tally` 就够
+  let segments = [
+    @tally.pinned("system", "you are a helpful assistant."),
+    @tally.oldest("history", "hello world hello world"),
+    @tally.newest("user", "hello there token"),
+  ]
+  let plan = @tally.fit(v, segments, 4096L)
+  println(plan.render())
+
+  // 2) 精确计数
   println(@tally.count(v, "it's a test"))
 
-  // 编码 / 解码：任意字节序列都可编码，解码后逐字节还原
+  // 3) 编码 / 解码：任意字节序列都可编码，解码后逐字节还原
   let ids = @tally.encode(v, @utf8.encode("hello world"))
   println(@tally.decode(v, ids))
 
-  // 逐片明细：哪一段在吃 token
+  // 4) 逐片明细：哪一段在吃 token
   for piece in @tally.piece_counts(v, @utf8.encode("hello there token")) {
     println(piece)
   }
-
-  // 上下文装配：按优先级截断 + 可解释的丢弃报告
-  println(@tally.fit(v, segments, 4096L).render())
 }
 ```
 
-还可以自己训练词表（同输入两次结果逐字节一致）：
+还可以自己训练词表（**能力证明，不是主线**；同输入两次训练结果逐字节一致）：
 
 ```moonbit
 fn train_demo() -> Unit raise {
@@ -84,6 +113,10 @@ fn train_demo() -> Unit raise {
 ### CLI
 
 ```powershell
+# 预算装配（Pinned 段保护 + 丢弃报告）——最常用
+# 输出：system 段 kept 26 token，payload 段 dropped 5 token 并给出原因
+moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --limit 28 --text "hello world hello world"
+
 # 计数
 moon run cmd/main --target js -- count --vocab tests/golden/sample-vocab.txt --text "hello world"
 
@@ -92,9 +125,6 @@ moon run cmd/main --target js -- count --vocab tests/golden/sample-vocab.txt --t
 
 # 编码为 id 序列
 moon run cmd/main --target js -- encode --vocab tests/golden/sample-vocab.txt --text "hello world"
-
-# 预算装配（Pinned 段保护 + 丢弃报告）
-moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --limit 5 --text "hello world hello world"
 ```
 
 `--file <f>` 可替代 `--text <s>`（按字节读取，不假设 UTF-8 合法）。
@@ -140,7 +170,7 @@ token 表可完全重建：
 `train -> to_text -> load_train` 是**不动点**：回读出的词表还能编码，且与原词表编码结果一致。
 同一份语料和参数训练两次，产物**逐字节相同**（tie-break 全序：pair 频次降序 → `left` 字节序升序 → `right` 字节序升序）。
 
-### 格式冻结（`FORMAT.lock`）
+## 格式冻结（`FORMAT.lock`）
 
 三种对外文本格式都被逐字节钉死：
 
@@ -156,9 +186,10 @@ token 表可完全重建：
 
 ## 非目标
 
-- 不是某个库的 MoonBit 版。公开词表文件只作**验证语料与兼容性输入**。
+- 不做通用分词器：不提供 `o200k` 等第二编码，不做 BPE 之外的算法（WordPiece / Unigram）。
 - 不做通用正则引擎——只为**固定的一条**预切分模式手写扫描器。
-- 不做 BPE 之外的分词算法（WordPiece / Unigram 留给 1.x）。
+- 不做性能优化：缓存与吞吐只给诚实数字，不设优化目标。
+- 不是某个库的 MoonBit 版。公开词表文件只作**验证语料与兼容性输入**。
 - 不做 LLM 客户端、向量检索、GUI / 文档站、服务端。
 
 ## 已知边界
@@ -167,9 +198,11 @@ token 表可完全重建：
 |---|---|
 | 预切分模式 | 只实现 cl100k 形状的 7 分支模式；换模式需改扫描器 |
 | Unicode 版本 | 属性表基于 **17.0.0**（`unicode_version()` 可查）。表由 `tools/gen_unicode.py` 从 `regex` 模块的属性表导出，**与参考实现同一引擎**，因此不是"近似"，而是逐码点一致 |
-| `o200k` 类编码 | 需要 `Lu/Lt/Lm/Lo/M` 类别，未支持（见路线图 V0.8） |
-| 训练 | 已实现（`vocab/train.mbt`）：自有格式产物 `tally-train v1`；测试夹具词表仍由 `tools/gen_sample_vocab.py` 确定性生成 |
-| 缓存 | 尚未实现（路线图 V0.4）；当前每次编码都重算 |
+| `o200k` 类编码 | 不提供。需要额外的 Unicode 类别与属性表，且不构成差异化 |
+| 截断粒度 | 当前按**整段**丢弃，不支持把一段截短（计划在 0.4.0） |
+| 窗口模型 | 当前 `limit` 是单值，不含「给回复预留多少」（计划在 0.4.0） |
+| 后端 | 只保证 `wasm-gc` 与 `js`；不保证 native |
+| 训练 | 已实现（`vocab/train.mbt`），定位为**能力证明**，不再扩展；测试夹具词表仍由 `tools/gen_sample_vocab.py` 确定性生成 |
 
 ## 开发
 
@@ -195,7 +228,7 @@ python tools/gen_alignment_golden.py --check
 python tools/gen_format_lock.py --check
 ```
 
-当前规模：**6 个包、65 项测试**，`wasm-gc` 与 `js` 双后端全绿；
+当前规模：**6 个包、67 项测试**（含 1 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
 矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
 矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**。
 

@@ -22,6 +22,34 @@ pub using @budget {
 }
 
 ///|
+/// 一段不可裁的上下文（system 提示、工具定义）。
+///
+/// 门面包提供这四个构造器，是为了让「只 import `weopqrst/tally`」也能装段：
+/// 枚举构造器 `Pinned` / `Newest` / `Middle` / `Oldest` 无法经 `pub using` 再导出，
+/// 而 `fit` 是主路径，不该逼使用者再依赖 `weopqrst/tally/budget`。
+pub fn pinned(role : String, text : String) -> @budget.Segment {
+  @budget.Segment::text(role, @budget.Pinned, text)
+}
+
+///|
+/// 最近若干轮：对下一步生成影响最大，优先保留。
+pub fn newest(role : String, text : String) -> @budget.Segment {
+  @budget.Segment::text(role, @budget.Newest, text)
+}
+
+///|
+/// 中间历史：第一批牺牲品之一。
+pub fn middle(role : String, text : String) -> @budget.Segment {
+  @budget.Segment::text(role, @budget.Middle, text)
+}
+
+///|
+/// 最早的历史：最先被丢，权重相同时下标更小者先丢。
+pub fn oldest(role : String, text : String) -> @budget.Segment {
+  @budget.Segment::text(role, @budget.Oldest, text)
+}
+
+///|
 /// 编码任意字节序列为 token id。
 pub fn encode(v : @vocab.Vocab, bytes : Bytes) -> Array[Int] {
   @vocab.Vocab::encode_bytes(v, bytes)
