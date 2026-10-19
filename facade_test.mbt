@@ -21,6 +21,30 @@ test "facade constructors are reachable with a single import" {
 }
 
 ///|
+/// README 承诺「外部 tokenizer 包一层闭包即可」：这里用字面量造一个自定义 Counter，
+/// 验证它的身份进得了报告——接入方不需要 import `budget`。
+test "single import can plug an external counter" {
+  let counter : @tally.Counter = {
+    name: "theirs/cl100k",
+    exact: true,
+    count_bytes: fn(bytes) { bytes.length().to_int64() },
+  }
+  let segments = [@tally.newest("payload", "abcdef")]
+  let cfg = @tally
+    .fit_config(counter, 4L)
+    .with_strategy(@tally.truncate_tail())
+  let plan = try {
+    @tally.fit_with(cfg, segments)
+  } catch {
+    _ => panic()
+  }
+  assert_true(plan.render().contains("counter theirs/cl100k exact=true"))
+  assert_eq(plan.tokens_used, 4L)
+  assert_eq(plan.truncated.length(), 1)
+  assert_eq(plan.truncated[0].tokens, 4L)
+}
+
+///|
 /// 计数器、窗口、截断策略也必须在单 import 下可用：
 /// 类型能经 `pub using` 导出，枚举构造器不行，所以策略只能靠门面函数给。
 test "single import can configure window and truncation" {

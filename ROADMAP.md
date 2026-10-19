@@ -69,7 +69,7 @@
 | V0.2 / 0.2.0 | 矩阵 A 全量 **2,935 条 / 16,273 token**（tiktoken 0.14.0 标注）；往返 550 组；无 OOV | golden 入库带参考版本号 |
 | V0.3 / 0.3.0 | 全序 tie-break（频次降 → `left` 升 → `right` 升）；`tally-train v1` 冻结；训练→导出→回读为不动点 | 65 测试双后端全绿；2026-10-19 发布 |
 | 0.3.1 | **定位切换为上下文预算引擎**：README / `moon.mod` / CLI 一致；门面补 `pinned`/`newest`/`middle`/`oldest`，单 import 可装配 | 67 测试双后端全绿（含 1 黑盒）；2026-10-19 发布，消费端 `moon run` 复验通过 |
-| 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 81 测试双后端全绿（含 2 黑盒）；矩阵 G 168 组不变量通过；本地完成，待发布 |
+| 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；本地完成，待发布 |
 
 ---
 
