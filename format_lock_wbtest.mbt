@@ -86,7 +86,7 @@ test "format lock: tally-plan v2 truncation" {
     Segment::text("system", Pinned, "sys"),
     Segment::text("payload", Newest, "abcdefghij"),
   ]
-  let cfg = FitConfig::new(Counter::cl100k(v), 8L)
+  let cfg = FitConfig::new(cl100k(v), 8L)
     .with_reserve(2L)
     .with_strategy(KeepPrefix)
   assert_eq(fit_with(cfg, segments).render(), frozen_plan_truncated)

@@ -24,7 +24,18 @@ let plan = @tally.fit_with(cfg, segments)
 println(plan.render())   // kept / truncated / dropped 三段清单与原因
 ```
 
-`fit(v, segments, limit)` 仍然可用：等价于「整窗可用、无预留、整段丢弃」，与旧版行为一致。
+`fit_with` 在配置不成立（`reserve >= window`）时 `raise`。「装不下」不会抛错——那写进报告；
+抛错只发生在配置本身矛盾。不想被错误类型绑住就用 `fit_with_result`：
+
+```moonbit
+match @tally.fit_with_result(cfg, segments) {
+  Ok(plan) => println(plan.render())
+  Err((reserve, window)) => println("reserve \{reserve} 吃掉了窗口 \{window}")
+}
+```
+
+`fit(v, segments, limit)` 仍然可用：等价于「整窗可用、无预留、整段丢弃」，与旧版行为一致
+（包括 `limit <= 0` 时全部丢弃 / Pinned 溢出上报，不抛错）。
 
 分词（`encode` / `decode` / `count`）是这套东西的**底座**：它保证预算层拿到的是精确数，而不是估算。
 
@@ -67,8 +78,11 @@ println(plan.render())   // kept / truncated / dropped 三段清单与原因
 
 需要通用分词器时用它；需要把上下文压进预算并留下可审计记录时用 tally。
 
-0.4.0 起 `budget` 只依赖 `Counter` 接口（`name` + `exact` + `count: (Bytes) -> Int64`），不再绑死词表。
-把它的分词结果包成一个 `Counter`，就能用它的 tokenizer 计数、用我们的预算层裁剪：
+0.4.0 起 `budget` 只依赖 `Counter` 接口（`name` + `exact` + `count_bytes: (Bytes) -> Int64`）。
+0.4.1 把 `cl100k` 适配器也移到门面包，`budget` 的包级依赖只剩 `core`
+（`moon info` 里 `budget` 的 import 表不含 `vocab`）——`import weopqrst/tally/budget`
+不会把词表一起拖进来。
+把外部 tokenizer 的分词结果包成一个 `Counter`，就能用它计数、用我们的预算层裁剪：
 
 ```moonbit
 // 示意：适配外部 tokenizer，不需要给外部类型写 impl
@@ -216,6 +230,12 @@ token 表可完全重建：
 在样本或指纹对不上时失败。改格式实现会先让 MoonBit 测试变红，改样本会先让 `--check` 变红
 ——两条路都不允许「悄悄漂移」。
 
+`tally-plan v2` 有两条**格式约束**（不引入转义，保证行结构可被空格切分）：
+
+- `counter` 名字与段 `role` 不得含空格或换行——它们直接进行内；
+- `overflow = true` 时 `[dropped]` 末尾多一行**哨兵**：`-1 pinned *overflow* <excess> <原因>`。
+  它不对应任何段，`tokens` 是超出量；按段对账时按 `index == -1` 跳过（`Plan.excess` 是同一数值）。
+
 ## 非目标
 
 - 不做通用分词器：不提供 `o200k` 等第二编码，不做 BPE 之外的算法（WordPiece / Unigram）。
@@ -233,7 +253,8 @@ token 表可完全重建：
 | `o200k` 类编码 | 不提供。需要额外的 Unicode 类别与属性表，且不构成差异化 |
 | 截断粒度 | 要么整段丢，要么截到「不超预算」为止；切点由 `Counter` 二分得到，**BPE 计数对长度不严格单调**（追加字节可能触发合并），因此不保证是理论最长的可容纳切片，但保证不超预算且可复现 |
 | 截断与字符边界 | 切点会回退到 UTF-8 字符边界，避免半个字符；若边界回退后一个 token 都不剩，则退化为整段丢 |
-| 窗口模型 | `window = reserve_output + input_limit`；`reserve >= window` 时显式报错，不支持「预留随内容变化」的自适应策略 |
+| 窗口模型 | `window = reserve_output + input_limit`；`reserve >= window` 时显式报错（`fit_with_result` 给出 `Err((reserve, window))`），不支持「预留随内容变化」的自适应策略 |
+| 估算计数器 | `estimate(n)` 按**字符**（Unicode 码点）向上取整，不按字节——中文一字 3 字节，按字节会放大 3 倍；它仍只是估算，报告里恒标 `exact=false` |
 | 后端 | 只保证 `wasm-gc` 与 `js`；不保证 native |
 | 训练 | 已实现（`vocab/train.mbt`），定位为**能力证明**，不再扩展；测试夹具词表仍由 `tools/gen_sample_vocab.py` 确定性生成 |
 
@@ -261,7 +282,7 @@ python tools/gen_alignment_golden.py --check
 python tools/gen_format_lock.py --check
 ```
 
-当前规模：**6 个包、82 项测试**（含 3 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
+当前规模：**6 个包、86 项测试**（含 5 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
 矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
 矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**。
 

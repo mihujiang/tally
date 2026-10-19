@@ -69,7 +69,8 @@
 | V0.2 / 0.2.0 | 矩阵 A 全量 **2,935 条 / 16,273 token**（tiktoken 0.14.0 标注）；往返 550 组；无 OOV | golden 入库带参考版本号 |
 | V0.3 / 0.3.0 | 全序 tie-break（频次降 → `left` 升 → `right` 升）；`tally-train v1` 冻结；训练→导出→回读为不动点 | 65 测试双后端全绿；2026-10-19 发布 |
 | 0.3.1 | **定位切换为上下文预算引擎**：README / `moon.mod` / CLI 一致；门面补 `pinned`/`newest`/`middle`/`oldest`，单 import 可装配 | 67 测试双后端全绿（含 1 黑盒）；2026-10-19 发布，消费端 `moon run` 复验通过 |
-| 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；本地完成，待发布 |
+| 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；2026-10-19 发布，消费端 `moon run` 复验通过 |
+| 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变（v2 输出逐字节不变） |
 
 ---
 
@@ -103,23 +104,51 @@
 **目标**：把 `budget` 从「按优先级丢段的雏形」变成真正的引擎，并解耦 tokenizer。
 
 - [x] **`Counter`**：`{ name, exact, count_bytes }`，`budget` 只依赖它，不再依赖 `Vocab`（`budget/counter.mbt`）
-- [x] 内置 `Counter::cl100k(v : Vocab)`，结果与原 `count_bytes` 逐 token 相等；另有 `Counter::estimate(n)`
-      标注 `exact=false`，估算不允许冒充精确
+      ——包级解耦 0.4.1 才补齐：`cl100k` 适配器搬到门面，`budget` 的 import 表只剩 `core`
+- [x] 内置 `cl100k(v : Vocab)`（0.4.1 起在门面包），结果与原 `count_bytes` 逐 token 相等；
+      另有 `estimate(n)` 标注 `exact=false`，估算不允许冒充精确
 - [x] **窗口模型**：`window = reserve_output + input_limit`，`reserve >= window` 时 `raise ReserveExceedsWindow`
 - [x] **截断策略**：`NoTruncate` / `KeepPrefix`（保留段首）/ `KeepSuffix`（保留段尾、即「最近优先」）。
       **不做** `KeepNewestN`：N 段保留属于会话策略，不是字节层职责，留给 V0.5 示例层
 - [x] **Pinned 原子性**：永不裁；超限给可操作诊断而不是静默越界
 - [x] **报告 v2（`tally-plan v2`）**：记录 counter 身份（name/exact）、每段动作（kept/truncated/dropped）、截断量
 - [x] 向后兼容：`fit(v, segments, limit)` 保留为 shim，语义等同 `fit_with(FitConfig::new(cl100k, limit))`
+      （0.4.1 起该 shim 在门面包，走 `budget::assemble`——它不校验 `limit > 0`，保住旧语义）
 - [x] 矩阵 G：3 策略 × 4 段落形状 × limit 1..14 = 168 组，校验 used 守恒、`<= limit`、Pinned 不裁、截断量合法、渲染可复现
 
-**完成标准**：`moon test` 双后端全绿（81 项）；shim 与新 API 的 `tally-plan` **逐字节相同**（`compat fit equals explicit config`）。
+- [x] 发布 0.4.0（2026-10-19，服务端 200 OK；API `latest_version=0.4.0`、`build_status=success`；
+      文档页 README 已刷新：`82 项测试` ×2、`fit_with` ×16、`tally-plan v1` 出现 0 次；
+      消费端新工程只 `import weopqrst/tally` 即完成 `estimate` + `with_reserve` + `with_strategy` + `fit_with`，`moon run` 通过）
+
+**完成标准**：`moon test` 双后端全绿（82 项）；shim 与新 API 的 `tally-plan` **逐字节相同**（`compat fit equals explicit config`）。
 
 **实现说明（与原计划的三处偏离）**：
 1. 策略名从 `TruncateTail/TruncateHead` 改为 `KeepPrefix/KeepSuffix`——原命名描述「砍哪头」，
    新命名描述「留哪头」，读调用点时不歧义；
 2. 截断不需要 `encode`：切点靠 `Counter` 二分字节长度得到，因此**外部 tokenizer 也能被截断**；
 3. `KeptSegment` / `TruncatedSegment` 现在直接带 `bytes`——否则「截短」只会计账、给不出可用内容。
+
+---
+
+## 0.4.1 — 0.4.0 检查修复 `0.4.1`
+
+**目标**：把 0.4.0 发布后的检查结论修掉——错误通道、估算语义、包级解耦、可对账。
+
+- [x] **错误可命名**：再导出 `type FitError`（`pub using` 能导出类型、导不出 suberror 构造器，
+      `@tally.ReserveExceedsWindow` 仍报 4021）；新增 `fit_with_result` 把错误折成
+      `Err((reserve, window))`——单 import 的使用者不靠错误类型名字也能分支
+- [x] **估算按字符**：`estimate(n)` 从「字节 ÷ n」改为「Unicode 码点 ÷ n」向上取整。
+      中文一字 3 字节，原实现会把预算放大 3 倍，与 README 批评的「字符数 ÷ 4」同病
+- [x] **包级解耦**：`cl100k` 适配器与 `fit` shim 上移门面包，`budget` 的 import 表只剩 `core`
+      （`vocab` 只出现在 `for "wbtest"`）；`budget::fit_impl` 更名为公开的 `assemble`（不校验配置）
+- [x] **overflow 可对账**：`Plan` 增加 `excess`；渲染仍是 v2（哨兵行不变），
+      格式文档写明 `index == -1` 的哨兵行，以及 `counter` / `role` 不得含空白
+- [x] **CLI 参数校验**：非法 `--truncate` / `--limit` / `--reserve` 直接报错（此前静默回落成 none / 0）。
+      已知限制：core 不提供退出码 API，`abort` 会带 JS 栈，所以目前只保证文案清楚、进程仍返回 0
+- [x] README 勘误：`count` → `count_bytes`、错误处理示例、估算语义、格式约束
+
+**完成标准**：`moon test` 双后端全绿（86 项，含 5 黑盒）；`gen_format_lock --check` 通过
+（v2 输出逐字节不变）；`moon info` 中 `budget` 的 import 表不含 `vocab`。
 
 ## V0.5 — 示例与集成 `0.5.0`
 

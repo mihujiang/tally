@@ -41,6 +41,10 @@ pub(all) struct DroppedSegment {
 ///|
 /// 装配计划。`tokens_used` 是**已装入窗口**的 token 数；
 /// 被丢弃的段不计入，被截断的段只计装入的部分。
+///
+/// `overflow` 为真时 `tokens_used > limit`，超出量在 `excess`；此时 `dropped`
+/// 末尾还有一行**哨兵**（`index = -1`、`role = "*overflow*"`），它的 `tokens`
+/// 是超出量而不是某个段的原量——按段对账时要跳过它。
 pub(all) struct Plan {
   /// 计数器身份（如 `cl100k_base` / `estimate@4`）
   counter : String
@@ -55,6 +59,8 @@ pub(all) struct Plan {
   tokens_used : Int64
   pinned_tokens : Int64
   overflow : Bool
+  /// 溢出量 `tokens_used - limit`（不溢出时为 0）
+  excess : Int64
   kept : Array[KeptSegment]
   truncated : Array[TruncatedSegment]
   dropped : Array[DroppedSegment]
@@ -70,20 +76,15 @@ pub fn fit_with(cfg : FitConfig, segments : Array[Segment]) -> Plan raise FitErr
   if cfg.reserve_output >= cfg.window {
     raise ReserveExceedsWindow(cfg.reserve_output, cfg.window)
   }
-  fit_impl(cfg, segments)
+  assemble(cfg, segments)
 }
 
 ///|
-/// 0.3 的兼容入口：整窗可用、整段丢弃。
+/// 装配但**不校验配置**：`reserve >= window`（甚至 `window <= 0`）时按实际预算如实记账。
 ///
-/// 语义与 `fit_with(FitConfig::new(cl100k(v), limit), segments)` 完全一致，
-/// 只是不回报 `ReserveExceedsWindow`（这里不会发生）。
-pub fn fit(v : @vocab.Vocab, segments : Array[Segment], limit : Int64) -> Plan {
-  fit_impl(FitConfig::new(Counter::cl100k(v), limit), segments)
-}
-
-///|
-fn fit_impl(cfg : FitConfig, segments : Array[Segment]) -> Plan {
+/// 给 0.3 兼容入口 `tally.fit` 用——它必须保持旧语义：预算为 0 时全部丢弃、
+/// Pinned 溢出上报，而不是抛错。普通调用请走 `fit_with`。
+pub fn assemble(cfg : FitConfig, segments : Array[Segment]) -> Plan {
   let limit = cfg.input_limit()
   let counter = cfg.counter
   let n = segments.length()
@@ -200,6 +201,7 @@ fn fit_impl(cfg : FitConfig, segments : Array[Segment]) -> Plan {
     tokens_used: total,
     pinned_tokens,
     overflow,
+    excess: if overflow { total - limit } else { 0L },
     kept,
     truncated,
     dropped,

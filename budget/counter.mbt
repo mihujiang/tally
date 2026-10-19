@@ -25,18 +25,24 @@ pub fn Counter::count(self : Counter, bytes : Bytes) -> Int64 {
 }
 
 ///|
-/// 精确计数器：用给定词表逐 token 计数（cl100k 形状）。
-pub fn Counter::cl100k(v : @vocab.Vocab) -> Counter {
-  {
-    name: "cl100k_base",
-    exact: true,
-    count_bytes: fn(bytes) { v.count_bytes(bytes) },
+/// 字符数（Unicode 码点）：按 UTF-8 起始字节计数，续字节 `10xxxxxx` 不计。
+///
+/// 非法 UTF-8 里的孤立续字节会被并入前一个字符，孤立起始字节各算一个字符；
+/// 估算本来就是估算，不需要为此报错。
+fn count_chars(bytes : Bytes) -> Int64 {
+  let mut n = 0L
+  for i = 0; i < bytes.length(); i = i + 1 {
+    if is_char_start(bytes.unsafe_get(i)) {
+      n = n + 1L
+    }
   }
+  n
 }
 
 ///|
-/// 估算计数器：`chars_per_token` 个字符当 1 token（向上取整）。
+/// 估算计数器：`chars_per_token` 个**字符**当 1 token（向上取整）。
 ///
+/// 按字符而不是按字节：中文一个字 3 字节，按字节算会把预算放大 3 倍。
 /// 只用于「还没有词表/不知道目标模型」的场合。`exact=false` 会写进报告。
 pub fn Counter::estimate(chars_per_token : Int) -> Counter {
   let cpt = if chars_per_token <= 0 { 4 } else { chars_per_token }
@@ -44,8 +50,7 @@ pub fn Counter::estimate(chars_per_token : Int) -> Counter {
     name: "estimate@" + cpt.to_string(),
     exact: false,
     count_bytes: fn(bytes) {
-      let n = bytes.length().to_int64()
-      (n + cpt.to_int64() - 1L) / cpt.to_int64()
+      (count_chars(bytes) + cpt.to_int64() - 1L) / cpt.to_int64()
     },
   }
 }

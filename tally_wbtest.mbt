@@ -80,6 +80,54 @@ test "facade window and truncation" {
 }
 
 ///|
+/// `cl100k` 适配器住在门面包：身份、精确性、计数都必须与词表直算一致。
+test "facade cl100k counter matches direct counting" {
+  let v = byte_vocab()
+  let counter = cl100k(v)
+  assert_eq(counter.name, "cl100k_base")
+  assert_true(counter.exact)
+  let bytes = @utf8.encode("hello 世界")
+  assert_eq(counter.count(bytes), count_bytes(v, bytes))
+  assert_eq(counter.count(bytes), bytes.length().to_int64())
+}
+
+///|
+/// 0.3 入口与新入口同语义：除调用方式外输出逐字节相同。
+test "compat fit equals explicit config" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("old", Oldest, "abc"),
+    Segment::text("new", Newest, "defgh"),
+  ]
+  let a = fit(v, segments, 6L)
+  let b = try {
+    fit_with(fit_config(cl100k(v), 6L), segments)
+  } catch {
+    _ => panic()
+  }
+  assert_eq(a.render(), b.render())
+}
+
+///|
+/// 0.3 入口不校验预算：`limit = 0` 时保持「全部丢弃、Pinned 溢出上报」，
+/// 而不是让 `reserve >= window` 的校验把它变成一次报错。
+test "compat fit keeps zero-budget semantics" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("old", Oldest, "abc"),
+  ]
+  let plan = fit(v, segments, 0L)
+  assert_true(plan.overflow)
+  assert_eq(plan.limit, 0L)
+  assert_eq(plan.tokens_used, 3L)
+  assert_eq(plan.excess, 3L)
+  assert_eq(plan.dropped.length(), 2)
+  assert_eq(plan.dropped[1].index, -1)
+}
+
+///|
 /// 估算计数器经门面同样自曝：`exact=false` 进报告。
 test "facade estimate counter is honest" {
   let segments = [newest("payload", "abcdefgh")]

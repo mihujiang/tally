@@ -23,6 +23,7 @@ pub using @budget {
   type Counter,
   type FitConfig,
   type TruncateStrategy,
+  type FitError,
 }
 
 ///|
@@ -91,8 +92,15 @@ pub fn piece_counts(v : @vocab.Vocab, bytes : Bytes) -> Array[(String, Int64)] {
 
 ///|
 /// 精确计数器：给定词表时逐 token 计数。
+///
+/// 适配器住在门面包：`budget` 只认 `Counter`，包级不依赖词表——所以
+/// `import weopqrst/tally/budget` 不会把整份 vocab 拖进来。
 pub fn cl100k(v : @vocab.Vocab) -> @budget.Counter {
-  @budget.Counter::cl100k(v)
+  {
+    name: "cl100k_base",
+    exact: true,
+    count_bytes: fn(bytes) { @vocab.Vocab::count_bytes(v, bytes) },
+  }
 }
 
 ///|
@@ -135,13 +143,33 @@ pub fn fit_with(
 }
 
 ///|
+/// 同 `fit_with`，但不 `raise`：配置不成立时返回 `Err((reserve, window))`。
+///
+/// 为什么需要它：`pub using` 能再导出 `FitError` **类型**，却导不出 suberror
+/// 构造器，只 import 门面包的使用者无法把 `ReserveExceedsWindow` 写进 `catch`。
+/// 「显式报错」得有一条不依赖错误类型名字的通道。
+pub fn fit_with_result(
+  cfg : @budget.FitConfig,
+  segments : Array[@budget.Segment],
+) -> Result[@budget.Plan, (Int64, Int64)] {
+  try {
+    Ok(@budget.fit_with(cfg, segments))
+  } catch {
+    @budget.ReserveExceedsWindow(reserve, window) => Err((reserve, window))
+  }
+}
+
+///|
 /// 装配上下文：按优先级整段丢弃（0.3 的兼容入口）。
+///
+/// 与 `fit_with(fit_config(cl100k(v), limit), segments)` 输出逐字节相同；
+/// 不校验 `limit > 0`（旧语义：预算为 0 时全部丢弃、Pinned 溢出上报）。
 pub fn fit(
   v : @vocab.Vocab,
   segments : Array[@budget.Segment],
   limit : Int64,
 ) -> @budget.Plan {
-  @budget.fit(v, segments, limit)
+  @budget.assemble(@budget.FitConfig::new(cl100k(v), limit), segments)
 }
 
 ///|

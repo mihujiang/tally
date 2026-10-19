@@ -70,3 +70,49 @@ test "single import can configure window and truncation" {
   assert_eq(plan.truncated[0].tokens, 3L)
   assert_false(plan.exact)
 }
+
+///|
+/// `fit_with` 会 `raise`：错误类型必须能被单 import 的使用者写进签名。
+fn propagate_error(
+  cfg : @tally.FitConfig,
+  segments : Array[@tally.Segment],
+) -> @tally.Plan raise @tally.FitError {
+  @tally.fit_with(cfg, segments)
+}
+
+///|
+/// 但 `pub using` 导不出 suberror 构造器（`@tally.ReserveExceedsWindow` 报 4021），
+/// 所以「显式报错」必须有一条不依赖错误类型名字的通道：`fit_with_result`。
+test "single import can handle reserve errors via fit_with_result" {
+  let bad = @tally.fit_config(@tally.estimate(1), 8L).with_reserve(8L)
+  match @tally.fit_with_result(bad, []) {
+    Ok(_) => panic()
+    Err((reserve, window)) => {
+      assert_eq(reserve, 8L)
+      assert_eq(window, 8L)
+    }
+  }
+  let good = @tally.fit_config(@tally.estimate(1), 4L)
+  let segments = [@tally.newest("payload", "abcd")]
+  match @tally.fit_with_result(good, segments) {
+    Ok(plan) => {
+      assert_eq(plan.tokens_used, 4L)
+      assert_false(plan.overflow)
+      assert_eq(plan.excess, 0L)
+    }
+    Err(_) => panic()
+  }
+}
+
+///|
+/// `raise @tally.FitError` 能写进签名（构造器仍不可命名，故 `catch` 用 `_` 兜底）。
+test "single import can name FitError in a signature" {
+  let cfg = @tally.fit_config(@tally.estimate(1), 8L).with_reserve(9L)
+  let mut raised = false
+  try {
+    let _ = propagate_error(cfg, [])
+  } catch {
+    _ => raised = true
+  }
+  assert_true(raised)
+}

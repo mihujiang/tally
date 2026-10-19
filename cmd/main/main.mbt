@@ -7,14 +7,22 @@
 // `run` 里，由 `main` 统一 `try/catch`。
 
 ///|
-fn parse_i64(s : String) -> Int64 {
+/// 严格解析非负整数：非法输入直接报错，不静默回落成 0
+/// （否则 `--limit abc` 会悄悄变成默认的 4096）。
+fn parse_i64(flag : String, s : String) -> Int64 raise {
   let chars = s.to_array()
+  if chars.length() == 0 {
+    raise Failure::Failure(flag + " expects a non-negative integer, got empty")
+  }
   let mut v : Int64 = 0
   for c in chars {
     let d = c.to_int() - 0x30
-    if d >= 0 && d <= 9 {
-      v = v * 10L + d.to_int64()
+    if d < 0 || d > 9 {
+      raise Failure::Failure(
+        flag + " expects a non-negative integer, got: \"" + s + "\"",
+      )
     }
+    v = v * 10L + d.to_int64()
   }
   v
 }
@@ -34,6 +42,7 @@ fn main {
   try {
     run(@env.args())
   } catch {
+    Failure::Failure(msg) => println("error: " + msg)
     e => println("error: " + e.to_string())
   }
 }
@@ -65,13 +74,20 @@ fn run(args : Array[String]) -> Unit raise {
       file = Some(args[i + 1])
       i = i + 2
     } else if a == "--limit" && has_next {
-      limit = parse_i64(args[i + 1])
+      limit = parse_i64("--limit", args[i + 1])
       i = i + 2
     } else if a == "--reserve" && has_next {
-      reserve = parse_i64(args[i + 1])
+      reserve = parse_i64("--reserve", args[i + 1])
       i = i + 2
     } else if a == "--truncate" && has_next {
-      truncate_mode = args[i + 1]
+      // 不认识的策略直接报错：静默回落成 none 会让「以为截了其实没截」。
+      let mode = args[i + 1]
+      if mode != "none" && mode != "tail" && mode != "head" {
+        raise Failure::Failure(
+          "--truncate expects none|tail|head, got: \"" + mode + "\"",
+        )
+      }
+      truncate_mode = mode
       i = i + 2
     } else if a == "--explain" {
       explain = true

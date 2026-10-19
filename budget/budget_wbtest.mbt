@@ -15,6 +15,17 @@ fn byte_vocab() -> @vocab.Vocab {
 }
 
 ///|
+/// 词表计数器：`Counter::cl100k` 已上移门面包（`budget` 不再依赖 `vocab`），
+/// 但预算层测试仍要「真实 token 数」，所以在这里本地包一层。
+fn exact_counter(v : @vocab.Vocab) -> Counter {
+  {
+    name: "cl100k_base",
+    exact: true,
+    count_bytes: fn(bytes) { @vocab.Vocab::count_bytes(v, bytes) },
+  }
+}
+
+///|
 test "lowest priority is dropped first, pinned survives (V14)" {
   let v = byte_vocab()
   let segments = [
@@ -23,7 +34,7 @@ test "lowest priority is dropped first, pinned survives (V14)" {
     Segment::text("mid", Middle, "cccc"),
     Segment::text("new", Newest, "dddd"),
   ]
-  let plan = fit(v, segments, 12L)
+  let plan = assemble(FitConfig::new(exact_counter(v), 12L), segments)
   assert_eq(plan.tokens_used, 12L)
   assert_false(plan.overflow)
   assert_eq(plan.kept.length(), 3)
@@ -43,7 +54,7 @@ test "drop order is deterministic when weights tie" {
     Segment::text("b", Oldest, "bbbb"),
     Segment::text("c", Oldest, "cccc"),
   ]
-  let plan = fit(v, segments, 4L)
+  let plan = assemble(FitConfig::new(exact_counter(v), 4L), segments)
   assert_eq(plan.tokens_used, 4L)
   // 并列时丢下标最小的（更早的历史）
   assert_eq(plan.dropped[0].role, "a")
@@ -57,7 +68,7 @@ test "pinned overflow is reported, not silently over budget (V13)" {
     Segment::text("system", Pinned, "aaaaaaaa"),
     Segment::text("new", Newest, "bbbb"),
   ]
-  let plan = fit(v, segments, 3L)
+  let plan = assemble(FitConfig::new(exact_counter(v), 3L), segments)
   assert_true(plan.overflow)
   // 只剩 Pinned，仍然超限：必须显式说明
   assert_eq(plan.tokens_used, 8L)
@@ -73,7 +84,7 @@ test "report is canonical and stable (V15)" {
     Segment::text("system", Pinned, "hi"),
     Segment::text("old", Oldest, "bye"),
   ]
-  let plan = fit(v, segments, 100L)
+  let plan = assemble(FitConfig::new(exact_counter(v), 100L), segments)
   let a = plan.render()
   let b = plan.render()
   assert_eq(a, b)
@@ -84,19 +95,17 @@ test "report is canonical and stable (V15)" {
 }
 
 ///|
-/// 计数器自带身份与「精不精确」，这是报告可追的前提。
-test "counters expose identity and exactness" {
-  let v = byte_vocab()
-  let exact = Counter::cl100k(v)
-  assert_true(exact.exact)
-  assert_eq(exact.name, "cl100k_base")
-  assert_eq(exact.count(@utf8.encode("abcdef")), 6L)
+/// 估算计数器：身份、精确性标注，以及**按字符而不是按字节**。
+test "estimate counts characters, not bytes" {
   let est = Counter::estimate(4)
   assert_false(est.exact)
   assert_eq(est.name, "estimate@4")
   assert_eq(est.count(@utf8.encode("abcdefgh")), 2L)
   // 向上取整：5 个字符 / 4 = 2
   assert_eq(est.count(@utf8.encode("abcde")), 2L)
+  // 「世界」= 2 个字符 / 6 个字节：按字符算是 1，按字节算会得 2
+  assert_eq(est.count(@utf8.encode("世界")), 1L)
+  assert_eq(Counter::estimate(1).count(@utf8.encode("世界")), 2L)
   // 非法参数回落默认值，不抛错
   assert_eq(Counter::estimate(0).name, "estimate@4")
 }
@@ -118,7 +127,7 @@ test "reserve shrinks the input limit" {
     Segment::text("system", Pinned, "sys"),
     Segment::text("payload", Newest, "abcdefghij"),
   ]
-  let cfg = FitConfig::new(Counter::cl100k(v), 8L).with_reserve(2L)
+  let cfg = FitConfig::new(exact_counter(v), 8L).with_reserve(2L)
   let plan = fit_with(cfg, segments)
   assert_eq(plan.window, 8L)
   assert_eq(plan.reserve, 2L)
@@ -133,7 +142,7 @@ test "reserve shrinks the input limit" {
 /// 预留吃掉整个窗口时显式报错，而不是把可用空间算成负数。
 test "reserve that swallows the window is rejected" {
   let v = byte_vocab()
-  let cfg = FitConfig::new(Counter::cl100k(v), 8L).with_reserve(8L)
+  let cfg = FitConfig::new(exact_counter(v), 8L).with_reserve(8L)
   let mut bad = true
   try {
     let _ = fit_with(cfg, [])
@@ -156,7 +165,7 @@ test "truncate keeps the prefix and lands on the limit" {
     Segment::text("payload", Newest, "0123456789"),
   ]
   let plan = fit_with(
-    FitConfig::new(Counter::cl100k(v), 8L).with_strategy(KeepPrefix),
+    FitConfig::new(exact_counter(v), 8L).with_strategy(KeepPrefix),
     segments,
   )
   assert_eq(plan.tokens_used, 8L)
@@ -180,7 +189,7 @@ test "truncate keeps the suffix" {
     Segment::text("payload", Newest, "0123456789"),
   ]
   let plan = fit_with(
-    FitConfig::new(Counter::cl100k(v), 8L).with_strategy(KeepSuffix),
+    FitConfig::new(exact_counter(v), 8L).with_strategy(KeepSuffix),
     segments,
   )
   assert_eq(plan.tokens_used, 8L)
@@ -200,7 +209,7 @@ test "truncation respects UTF-8 boundaries" {
     Segment::text("payload", Newest, "世界"),
   ]
   let plan = fit_with(
-    FitConfig::new(Counter::cl100k(v), 6L).with_strategy(KeepPrefix),
+    FitConfig::new(exact_counter(v), 6L).with_strategy(KeepPrefix),
     segments,
   )
   let t = plan.truncated[0]
@@ -218,7 +227,7 @@ test "truncation falls back to dropping when nothing fits" {
     Segment::text("payload", Newest, "abcdefghij"),
   ]
   let plan = fit_with(
-    FitConfig::new(Counter::cl100k(v), 3L).with_strategy(KeepPrefix),
+    FitConfig::new(exact_counter(v), 3L).with_strategy(KeepPrefix),
     segments,
   )
   assert_eq(plan.truncated.length(), 0)
@@ -234,7 +243,7 @@ test "truncation falls back to dropping when nothing fits" {
 /// Pinned 段永不截断；渲染可重复。
 test "matrix G: invariants hold across limits and strategies" {
   let v = byte_vocab()
-  let counter = Counter::cl100k(v)
+  let counter = exact_counter(v)
   let strategies = [NoTruncate, KeepPrefix, KeepSuffix]
   let shapes = [
     [
@@ -272,6 +281,11 @@ test "matrix G: invariants hold across limits and strategies" {
         assert_eq(plan.tokens_used, used)
         if !plan.overflow {
           assert_true(plan.tokens_used <= plan.limit)
+          assert_eq(plan.excess, 0L)
+        } else {
+          // 溢出量必须与「用超了多少」对得上，且只有 Pinned 能撑爆窗口
+          assert_eq(plan.excess, plan.tokens_used - plan.limit)
+          assert_eq(plan.pinned_tokens, plan.tokens_used)
         }
         // Pinned 段只可能整段保留，绝不截断
         for k in plan.kept {
@@ -291,16 +305,3 @@ test "matrix G: invariants hold across limits and strategies" {
   assert_true(cases >= 40)
 }
 
-///|
-/// 0.3 入口与新入口同语义：除调用方式外输出逐字节相同。
-test "compat fit equals explicit config" {
-  let v = byte_vocab()
-  let segments = [
-    Segment::text("system", Pinned, "sys"),
-    Segment::text("old", Oldest, "abc"),
-    Segment::text("new", Newest, "defgh"),
-  ]
-  let a = fit(v, segments, 6L)
-  let b = fit_with(FitConfig::new(Counter::cl100k(v), 6L), segments)
-  assert_eq(a.render(), b.render())
-}

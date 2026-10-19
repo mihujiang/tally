@@ -32,6 +32,11 @@ fn strategy_name(s : TruncateStrategy) -> String {
 
 ///|
 /// 把计划渲染成规范文本。冻结为格式 `tally-plan v2`。
+///
+/// 两条格式约束（不新增转义，保持行结构可被空格切分）：
+/// * `counter` 的名字与段 `role` **不得含空格或换行**——它们直接进行内；
+/// * `overflow` 为真时 `[dropped]` 末尾有一行哨兵：`-1 pinned *overflow* <excess> <原因>`，
+///   它不是某个段，按段对账（求和、计数）时要按 `index == -1` 跳过。
 pub fn Plan::render(self : Plan) -> String {
   let out : Array[Char] = []
   push_str(out, "tally-plan v2\n")

@@ -1,11 +1,12 @@
 import {
   "moonbitlang/core/encoding/utf8",
-  "weopqrst/tally/vocab",
 }
 
 import {
   "moonbitlang/core/encoding/utf8",
+  "weopqrst/tally/vocab",
 } for "wbtest"
 
 // 预算 `budget`：上下文装配、截断、可解释的丢弃报告。
-// 依赖方向：budget ──▶ vocab ──▶ bpe。budget 不认识"钱"。
+// 依赖方向：budget ──▶ core（`vocab` 只在白盒测试里用，不进包依赖）。
+// 计数器是可插拔的 `Counter`；cl100k 适配器在门面包 `tally` 里，所以本包不认识词表。
