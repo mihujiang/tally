@@ -1,0 +1,83 @@
+== 01 big-input: ~100k token log -> 8192 window, 1024 reserved
+log_lines 1695 log_tokens 100005
+tally-plan v2
+counter cl100k_base exact=true
+window 8192
+reserve 1024
+input_limit 7168
+used 7168
+pinned 50
+overflow false
+[kept]
+0 pinned system 50
+2 newest user 33
+[truncated]
+1 oldest old-log 100005->7085 suffix
+[dropped]
+
+== 02 multi-turn: 12 turns, pinned system, 360 window / 40 reserved
+pinned_kept true dropped 8
+tally-plan v2
+counter cl100k_base exact=true
+window 360
+reserve 40
+input_limit 320
+used 267
+pinned 51
+overflow false
+[kept]
+0 pinned system 51
+9 middle history 45
+10 newest history 56
+11 newest history 49
+12 newest history 66
+[truncated]
+[dropped]
+1 oldest history 36 为满足预算而丢弃（最早的历史，最先牺牲）
+2 oldest history 50 为满足预算而丢弃（最早的历史，最先牺牲）
+3 oldest history 35 为满足预算而丢弃（最早的历史，最先牺牲）
+4 oldest history 47 为满足预算而丢弃（最早的历史，最先牺牲）
+5 middle history 49 为满足预算而丢弃（优先级低于 Newest）
+6 middle history 45 为满足预算而丢弃（优先级低于 Newest）
+7 middle history 36 为满足预算而丢弃（优先级低于 Newest）
+8 middle history 61 为满足预算而丢弃（优先级低于 Newest）
+
+== 03 rag: 6 chunks + question, 260 window / 20 reserved
+chunks 6 kept 4 dropped 4
+tally-plan v2
+counter cl100k_base exact=true
+window 260
+reserve 20
+input_limit 240
+used 185
+pinned 37
+overflow false
+[kept]
+0 pinned system 37
+1 newest chunk 59
+2 newest chunk 62
+7 newest question 27
+[truncated]
+[dropped]
+3 middle chunk 57 为满足预算而丢弃（优先级低于 Newest）
+4 middle chunk 57 为满足预算而丢弃（优先级低于 Newest）
+5 oldest chunk 50 为满足预算而丢弃（最早的历史，最先牺牲）
+6 oldest chunk 52 为满足预算而丢弃（最早的历史，最先牺牲）
+
+== 04 foreign-counter: external tokenizer as Counter, 24 window / 4 reserved
+counter space-words exact false
+tally-plan v2
+counter space-words exact=false
+window 24
+reserve 4
+input_limit 20
+used 20
+pinned 4
+overflow false
+[kept]
+0 pinned system 4
+2 newest question 5
+[truncated]
+1 oldest doc 31->11 prefix
+[dropped]
+

@@ -1,5 +1,7 @@
 # tally
 
+[English](./README.en.md) | 中文
+
 > **MoonBit 的上下文预算引擎**——把任意长度的上下文精确压进 token 预算，并告诉你丢了什么、为什么。
 
 上下文塞不进窗口是 agent 的必然事件，不是边界情况。常见做法是「字符数 ÷ 4」估算、再按长度硬切：切在半个 JSON 或半个工具调用中间，事后也无法解释为什么留下这一段、丢掉那一段。
@@ -60,7 +62,7 @@ match @tally.fit_with_result(cfg, segments) {
 | 词表 | `vocab` | 词表模型、加载（含自写 base64）、规范文本导出、可复现 BPE 训练 | `bpe` + `core` |
 | **预算（产品本体）** | `budget` | **`Counter` 可插拔计数、窗口模型、优先级装配与截断，输出可解释、可冻结的报告** | `bpe` |
 | 门面 | `tally`（根包） | `fit_with` / `fit` / `encode` / `count` 的最短路径 | 以上三层 |
-| 工具 | `cmd/main` | CLI（唯一有 IO 的地方） | `x/fs` |
+| 工具与示例 | `cmd/main`、`cmd/examples` | CLI 与可运行示例（唯一有 IO 的地方） | `x/fs` |
 
 **核心包零第三方依赖**；`moonbitlang/x` 只被 `cmd/main` 用于读写文件。
 
@@ -176,6 +178,26 @@ moon run cmd/main --target js -- encode --vocab tests/golden/sample-vocab.txt --
 
 `--file <f>` 可替代 `--text <s>`（按字节读取，不假设 UTF-8 合法）。
 
+## 示例（可运行、可 diff）
+
+四个场景在 `cmd/examples/`，输出是 `tally-plan v2` 规范文本，**逐字节入库**
+（`examples/expected/`），由 `python tools/check_examples.py` 复核——示例不是文档里的伪代码。
+
+```powershell
+moon run cmd/examples --target js -- all          # 全部跑一遍
+moon run cmd/examples --target js -- big-input    # 也可以单跑
+```
+
+| 示例 | 场景 | 关注点 |
+|---|---|---|
+| `big-input` | 十万 token 级日志 → 8192 窗口（留 1024 给回复） | 日志段被**保留段尾**截到 7085 token，`used` 正好 7168 |
+| `multi-turn` | 12 轮历史 + `Pinned` system 提示，360 窗口 / 40 预留 | 最早 4 轮先丢、中间 5 轮后丢，最近 3 轮与 system 全保留 |
+| `rag` | 6 个检索片段 + 问题，按分数映射 `Priority` | 低分片段整段丢（默认策略），高分片段与问题保留 |
+| `foreign-counter` | 外部 tokenizer（按空白切词）包成 `Counter` | 不引入任何依赖，照样计数并把 31 词的段截到 11 词 |
+
+示例默认读夹具词表 `tests/golden/sample-vocab.txt`；换成真实词表只需
+`--vocab data/cl100k_base.tiktoken`（`python tools/fetch_vocab.py` 下载；`data/` 不入库）。
+
 ## 词表格式
 
 自有规范文本格式 `tally-vocab v1`，可 diff、可指纹，`id` 与 `rank` 显式分开且 `id` 必须稠密升序：
@@ -275,17 +297,24 @@ python tools/gen_pretoken_golden.py    # 预切分 golden
 python tools/gen_alignment_golden.py   # 逐 token 对齐 golden
 python tools/gen_format_lock.py        # FORMAT.lock 指纹（含 sample-train.txt）
 
-# CI：生成物 / 指纹对不上就失败
+# 示例输出（改了报告格式或示例，需要 --update 并 review diff）
+python tools/check_examples.py
+python tools/check_examples.py --update
+
+# CI：生成物 / 指纹 / 示例输出对不上就失败（手动跑同一组命令）
 python tools/gen_unicode.py --check
 python tools/gen_sample_vocab.py --check
 python tools/gen_pretoken_golden.py --check
 python tools/gen_alignment_golden.py --check
 python tools/gen_format_lock.py --check
+python tools/check_examples.py
 ```
 
-当前规模：**6 个包、87 项测试**（含 6 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
+当前规模：**7 个包、87 项测试**（含 6 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
 矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
-矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**。
+矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**；
+**4 个示例 + 1 条 CLI 用例**的真实输出逐字节入库（`examples/expected/`）。
+上述检查全部在 `.github/workflows/ci.yml` 里自动跑。
 
 ## 许可
 

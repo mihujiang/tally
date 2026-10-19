@@ -1,0 +1,14 @@
+tally-plan v2
+counter cl100k_base exact=true
+window 34
+reserve 4
+input_limit 30
+used 30
+pinned 26
+overflow false
+[kept]
+0 pinned system 26
+[truncated]
+1 newest payload 5->4 prefix
+[dropped]
+

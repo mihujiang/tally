@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain version
+        run: |
+          moon version --all
+          node --version
+          python3 --version
+
+      - name: Resolve dependencies
+        run: moon update
+
+      # 双后端必须都过：wasm-gc 是发布目标，js 是示例与 CLI 的运行环境。
+      - name: check (wasm-gc)
+        run: moon check --target wasm-gc
+      - name: check (js)
+        run: moon check --target js
+      - name: test (wasm-gc)
+        run: moon test --target wasm-gc
+      - name: test (js)
+        run: moon test --target js
+
+      # 生成物与指纹：任何一处漂移都失败（README「开发」一节逐条对应）。
+      - name: golden / format lock
+        run: |
+          python3 tools/gen_unicode.py --check
+          python3 tools/gen_sample_vocab.py --check
+          python3 tools/gen_pretoken_golden.py --check
+          python3 tools/gen_alignment_golden.py --check
+          python3 tools/gen_format_lock.py --check
+
+      # 示例的真实输出逐字节比对：报告是规范文本，所以可以当指纹用。
+      - name: examples
+        run: python3 tools/check_examples.py
+
+      # 发布包能被打出来（不发布、不需要凭据）。
+      - name: package
+        run: moon package

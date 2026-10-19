@@ -71,6 +71,7 @@
 | 0.3.1 | **定位切换为上下文预算引擎**：README / `moon.mod` / CLI 一致；门面补 `pinned`/`newest`/`middle`/`oldest`，单 import 可装配 | 67 测试双后端全绿（含 1 黑盒）；2026-10-19 发布，消费端 `moon run` 复验通过 |
 | 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；2026-10-19 发布，消费端 `moon run` 复验通过 |
 | 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变；2026-10-19 发布，注册表 checksum 与本地构建包 sha256 一致，消费端 `moon run` 复验通过 |
+| 0.5.0 | **示例与集成**：4 个可运行示例（100k→8k 日志、多轮历史、RAG 片段、外部 Counter）、英文 README、GitHub Actions CI；示例输出逐字节入库 | 87 测试双后端全绿；`tools/check_examples.py` 比对 4 示例 + 1 CLI 用例，输出可 diff；CI 工作流覆盖双后端 check/test、5 个 `--check`、示例比对与 `moon package` |
 
 ---
 
@@ -156,14 +157,30 @@
 **完成标准**：`moon test` 双后端全绿（发布时 86 项，含 5 黑盒；补测后 87 项 / 6 黑盒）；
 `gen_format_lock --check` 通过（v2 输出逐字节不变）；`moon info` 中 `budget` 的 import 表不含 `vocab`。
 
-## V0.5 — 示例与集成 `0.5.0`
+## V0.5 — 示例与集成 `0.5.0`（已完成）
 
-- [ ] ① 100k token → 8k：输出丢弃/截断报告 ② 多轮历史（pinned 系统提示不丢） ③ RAG 片段拼装
-- [ ] 文档级适配 `tokenizers-moonbit`（片段 + 用例，**不引入依赖**，守住核心零依赖）
-- [ ] 双语 README（中/英，双语即止）
-- [ ] 每个示例的 token 数与报告可在 CI 复算
+- [x] ① 100k token → 8k：输出丢弃/截断报告 ② 多轮历史（pinned 系统提示不丢） ③ RAG 片段拼装
+      —— 落在 `cmd/examples/`（`big-input` / `multi-turn` / `rag`），另加第 4 个：外部 tokenizer
+- [x] 文档级适配 `tokenizers-moonbit`（片段 + 用例，**不引入依赖**，守住核心零依赖）
+      —— README 的 `Counter` 片段 + `foreign-counter` 示例（外部类型不写 `impl`，也不加依赖）
+- [x] 双语 README（中/英，双语即止）：`README.md` + `README.en.md`，顶部互链
+- [x] 每个示例的 token 数与报告可在 CI 复算
+      —— `tools/check_examples.py`：4 个示例 + 1 条 CLI `fit` 的 stdout 与
+      `examples/expected/*.txt` **逐字节**比对；`--update` 才重写，diff 必须人工 review
 
-**完成标准**：`moon run cmd/main -- fit ...` 与全部示例进 CI，输出可 diff。
+**完成标准**：`moon run cmd/main -- fit ...` 与全部示例进 CI，输出可 diff —— 已满足
+（`.github/workflows/ci.yml` 的 `examples` 步骤）。
+
+**实现说明**：
+1. 示例放在 `cmd/examples` 而不是 `examples/`：读词表需要 IO，仓库的口径是「IO 只在 `cmd/`」；
+2. 示例默认读夹具词表（277 token），`--vocab data/cl100k_base.tiktoken` 可换真实词表
+   （`data/` 不入库，CI 不依赖它）；
+3. 报告是 `tally-plan v2` 规范文本，所以「可 diff」直接落在字节上，不需要另建断言层；
+4. CI 首次真正运行要等 push 后由 GitHub Actions 执行——工作流本身未经本地 runner 验证。
+
+**未做（诚实记账）**：
+- CI 未在本地验证过（无 act/runner）；安装步骤用官方 `install/unix.sh`；
+- V1.0 的硬条件「被真实项目依赖」仍为 0，不在本版范围内解决。
 
 ## V0.6 — 稳健性与报告冻结 `0.6.0`
 
