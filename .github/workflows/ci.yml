@@ -37,6 +37,20 @@ jobs:
       - name: test (js)
         run: moon test --target js
 
+      # 生成器自身依赖参考实现：版本不固定，--check 的结果就没有意义。
+      # 用独立 venv 而不是系统 python：ubuntu 的 PEP 668 会拒绝直接 pip install，
+      # 且 .venv 放在仓库外，免得被打进发布包。
+      - name: Reference toolchain
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/pip" install -r requirements-dev.txt
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      # 对齐 golden 的参考词表 1.6MB，不入库；按 sha256 校验后下载。
+      - name: Reference vocabulary
+        run: python3 tools/fetch_vocab.py
+
       # 生成物与指纹：任何一处漂移都失败（README「开发」一节逐条对应）。
       - name: golden / format lock
         run: |

@@ -1,0 +1,11 @@
+# 生成器（tools/gen_*.py）的参考实现依赖。
+#
+# 版本必须与 golden 一致，否则 --check 必失败：
+# * `gen_unicode.py` 把 `regex` 的 Unicode 属性表导成 `bpe/unicode_tables.mbt`，
+#   生成的文件里写着 `source_engine = "regex <version>"`；
+# * `gen_pretoken_golden.py` / `gen_alignment_golden.py` 用 tiktoken 的 pat_str 与
+#   cl100k_base 作参考，生成的文件里也写着 tiktoken 版本。
+#
+# 对齐 golden 还需要参考词表：`python tools/fetch_vocab.py`（1.6MB，按 sha256 固化，不入库）。
+regex==2026.9.29
+tiktoken==0.14.0

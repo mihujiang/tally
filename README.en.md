@@ -275,6 +275,10 @@ moon check --target js
 moon test  --target wasm-gc
 moon test  --target js
 
+# reference-toolchain pins for the generators (see requirements-dev.txt)
+python -m pip install -r requirements-dev.txt
+python tools/fetch_vocab.py           # reference vocabulary for the alignment golden (not committed)
+
 # generated artefacts (regenerate and commit after changes)
 python tools/gen_unicode.py
 python tools/gen_sample_vocab.py

@@ -290,6 +290,10 @@ moon check --target js
 moon test  --target wasm-gc
 moon test  --target js
 
+# 生成器的参考实现依赖（版本与 golden 绑定，见 requirements-dev.txt）
+python -m pip install -r requirements-dev.txt
+python tools/fetch_vocab.py           # 对齐 golden 的参考词表（不入库）
+
 # 生成物：改动后重新生成并提交
 python tools/gen_unicode.py            # Unicode 属性表
 python tools/gen_sample_vocab.py       # 测试夹具词表
