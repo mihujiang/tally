@@ -8,6 +8,7 @@
 #   tally-plan  v2   预算计划报告（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #   tally-digest v1  报告摘要侧车，校验口径（budget/digest.mbt）
+#   tally-seal  v1   摘要的密钥印记，HMAC-SHA256（budget/seal.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
 # 内容断言在 MoonBit 测试里，改实现先红的是测试，不是这张表。
@@ -21,3 +22,4 @@ tally-train v1 	tests/golden/sample-train.txt   	    641	b6fe732be81a49f662223bb
 tally-digest v1	tests/golden/sample-digest.txt  	    337	3e8f5ace11c2a7824653fb0e43e4824e970b6fc370d29782922a63061134f155
 tally-digest v1	tests/golden/sample-digest-overflow.txt	    254	5fdbe9602dc248fbf60a9398fd9696283cc5c7f5c42c46398bb44927c0299515
 tally-digest v1	tests/golden/sample-digest-truncated.txt	    318	a9793d628de80d94a8ee97b54dbc73f0d09d41521a44f326b107ad41ab2a378a
+tally-seal v1  	tests/golden/sample-seal.txt    	    185	bb478313cfa9049e3223c7a524999626dd55c32a98e824ecbff9af8bff4a2818

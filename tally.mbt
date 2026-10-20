@@ -26,6 +26,8 @@ pub using @budget {
   type FitError,
   type DigestError,
   type PlanDigest,
+  type Seal,
+  type SealError,
 }
 
 ///|
@@ -180,6 +182,29 @@ pub fn verify_report(
   digest_text : String,
 ) -> Result[Unit, String] {
   @budget.verify_report(report, digest_text)
+}
+
+///|
+/// 给摘要盖印记（`tally-seal v1`，HMAC-SHA256）。
+///
+/// 印记回答的是"有没有人认过这份摘要"，不是"谁写的"——对称密钥证明持有者，
+/// 不证明身份。返回 `Result` 而不是 `raise`，理由同 `verify_report`。
+pub fn seal_digest(
+  digest_text : String,
+  key : String,
+  key_id : String,
+) -> Result[String, String] {
+  @budget.seal_digest_result(digest_text, key, key_id)
+}
+
+///|
+/// 校验「摘要 + 印记」：摘要没被换、印记确由这把密钥盖出。
+pub fn verify_seal(
+  digest_text : String,
+  seal_text : String,
+  key : String,
+) -> Result[Unit, String] {
+  @budget.verify_seal(digest_text, seal_text, key)
 }
 
 ///|

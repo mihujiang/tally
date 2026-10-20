@@ -9,7 +9,7 @@ Context overflow is an event that happens before *every* agent call, not an edge
 usual fix is "characters ÷ 4" and then a hard cut — which lands in the middle of a JSON
 object or a tool call, and leaves you unable to explain afterwards why one chunk survived.
 
-`tally` does four things, and every one of them is checkable:
+`tally` does five things, and every one of them is checkable:
 
 1. **Exact counting** — byte-level BPE of cl100k shape; 2,935 corpus cases aligned
    token-by-token against `tiktoken 0.14.0`, zero differences.
@@ -21,6 +21,10 @@ object or a tool call, and leaves you unable to explain afterwards why one chunk
    report bytes, one per segment. `verify` first cross-checks the two files, then — given the
    vocabulary and the input — **re-assembles the plan** and compares both files byte for byte.
    "The report says this fit" becomes something a third party can check.
+5. **Accountable** (0.6.1) — the digest can be sealed with a shared key into `tally-seal v1`;
+   `verify --seal --key` checks in one pass that the digest was not swapped and that someone
+   vouched for it. It proves *a holder of the key signed it*, **not who signed it**: a symmetric
+   key carries no identity, and that is stated in the format rather than buried in docs.
 
 ```moonbit
 let segments = [
@@ -181,6 +185,13 @@ moon run cmd/main --target js -- digest --vocab tests/golden/sample-vocab.txt --
 
 # verify: cross-check the two files, then re-assemble and compare byte for byte
 moon run cmd/main --target js -- verify --report report.txt --digest digest.txt --vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --text "hello world hello world"
+
+# seal: vouch for the digest with a shared key (the key never appears in output;
+# use --key-file in production instead of --key, which lands in shell history)
+moon run cmd/main --target js -- seal --digest digest.txt --key ci-key --key-id ci
+
+# verify with a seal: self-consistency + seal + (given the input) end-to-end recompute
+moon run cmd/main --target js -- verify --report report.txt --digest digest.txt --seal seal.txt --key ci-key
 ```
 
 `--file <f>` replaces `--text <s>` and reads raw bytes (no UTF-8 assumption).
@@ -191,7 +202,10 @@ A failed verification prints one `error:` line that names the position and both 
 error: report sha256 mismatch: digest says 317c0e78…, file is d7dd9d5b…
 ```
 
-The exit code is not part of the contract (MoonBit's core has no `exit`); CI asserts on stdout.
+**The exit code is part of the contract** (since 0.6.1): `0` on success, `1` on any failure, so
+`tally verify` can go straight into CI instead of having its output grepped. Up to 0.6.0 it
+printed `error: ...` and still exited `0`; both `tools/check_examples.py` and CI's
+`verify (failure exits non-zero)` step now guard against that coming back.
 
 ## Examples (runnable, diffable)
 
@@ -249,7 +263,7 @@ the token table is fully reconstructible. `train -> to_text -> load_train` is a 
 
 ## Format lock (`FORMAT.lock`)
 
-Four external text formats are pinned byte for byte:
+Five external text formats are pinned byte for byte:
 
 | Format | Content | Pinned by |
 |---|---|---|
@@ -257,6 +271,7 @@ Four external text formats are pinned byte for byte:
 | `tally-plan v2` | budget plan report (`budget/report.mbt`) | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated}.txt` |
 | `tally-train v1` | training recipe (`vocab/train_format.mbt`) | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
 | `tally-digest v1` | report digest sidecar (`budget/digest.mbt`) | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
+| `tally-seal v1` | keyed seal over the digest (`budget/seal.mbt`) | `budget/seal_lock_wbtest.mbt` + `tests/golden/sample-seal.txt` |
 
 `FORMAT.lock` records byte count and sha256 of every sample;
 `python tools/gen_format_lock.py --check` fails on any drift. Changing the renderer turns the
@@ -292,18 +307,48 @@ Rules (pinned by tests and `FORMAT.lock`):
 - a `dropped` segment's sha is always `-`: it never entered the window;
 - the overflow sentinel `-1` is listed and counted in the `plan` hash (an overflow must be
   auditable) but skipped by both sides during reconciliation;
-- newlines are normalized first (CRLF→LF, trailing blank lines folded), so files written by a
-  Windows console redirect verify the same way.
+- input is normalized first (UTF-8 BOM dropped, CRLF→LF, trailing blank lines folded), so files
+  written by a Windows console redirect or an editor verify the same way; UTF-16 (PowerShell
+  5.1's default redirect encoding) is rejected with a "save as UTF-8" hint.
 
-`verify` has two levels, and only the second is end-to-end:
+### Seal format `tally-seal v1`
+
+The digest proves "the bytes did not change"; the seal proves "someone vouched for this digest".
+Five lines, fixed order, pinned by `FORMAT.lock`:
+
+```text
+tally-seal v1
+scheme hmac-sha256
+key_id ci
+digest <sha256 of the digest file>
+seal <HMAC-SHA256 hex>
+```
+
+Rules:
+
+- `seal` covers the **first four lines** (header included) and not itself — a signature cannot
+  cover itself;
+- `key_id` is signed too: editing the label without recomputing the mac fails (rotating keys
+  means re-sealing);
+- only `hmac-sha256`; any other `scheme` is refused instead of guessed;
+- an empty key is refused: an empty key means anyone can seal;
+- it is **symmetric**: it proves a holder of the same key vouched for it, **not who did**. Proving
+  identity needs asymmetric signatures and key distribution — out of scope, see "Does not do";
+- the key never appears in output: the seal file can be committed or pasted into a ticket, and
+  the key is injected via `--key-file` (or your own secret manager), not `--key`, which ends up
+  in shell history.
+
+`verify` has three levels, and only the last one is end-to-end:
 
 | Level | Input | What it proves |
 |---|---|---|
 | self-consistency | report + digest | the two files agree: report bytes unchanged, segment count/action/used all match, `input_limit == window - reserve` |
+| seal | plus `--seal` and `--key`/`--key-file` | someone holding the key vouched for this digest: swapped digest, edited `key_id`, edited seal line, wrong key all fail |
 | end-to-end recompute | plus `--vocab` and the input | re-assemble from the same vocabulary and input; the new report and digest must equal the old files byte for byte |
 
-Only the second level rules out "both files were edited into a consistent lie", which is why CI
-runs both.
+Only the last level rules out "both files were edited into a consistent lie". The seal checks a
+different axis: not whether the content is right, but whether anyone vouched for that content.
+CI runs all three.
 
 ## Non-goals
 
@@ -312,6 +357,8 @@ runs both.
 - Not a general regex engine — one fixed pre-tokenization pattern, hand-written scanner.
 - No performance tuning: honest numbers only, no optimization targets.
 - Not "library X, ported to MoonBit". Public vocabulary files are validation input only.
+- No public-key signatures or identity: `tally-seal v1` is HMAC-SHA256 only. No Ed25519, no
+  certificate chains, no "who signed it". It answers "did anyone vouch", not "who".
 - No LLM client, no vector search, no GUI / docs site, no server.
 
 ## Known limits
@@ -361,14 +408,17 @@ python tools/gen_format_lock.py --check
 python tools/check_examples.py
 ```
 
-Current size: **7 packages, 122 tests** (6 of them black-box, public API only), green on both
+Current size: **7 packages, 148 tests** (8 of them black-box, public API only), green on both
 `wasm-gc` and `js`; matrix A aligns **2,935 corpus cases** (16,273 tokens, zero differences)
 against the reference implementation; matrix D (reproducible training) is byte-identical
 across 5 parameter sets; matrix I (garbage input may only succeed or fail with a **named**
 error) and matrix J (change one byte and verification must fail **with a position**) live in
-`vocab/robustness_wbtest.mbt` and `budget/digest_wbtest.mbt`; **4 examples + 4 CLI cases** are
-committed byte for byte under `examples/expected/`. All of it runs in
-`.github/workflows/ci.yml`, including the two `verify` steps.
+`vocab/robustness_wbtest.mbt` and `budget/digest_wbtest.mbt`; HMAC is checked against six RFC
+4231 vectors (`budget/hmac_wbtest.mbt`) and the frozen seal sample is cross-checked against
+Python's `hmac`; **7 example cases** are committed byte for byte under `examples/expected/`,
+two of which must fail (and assert a non-zero exit code). All of it runs in
+`.github/workflows/ci.yml`: `verify` self-consistency, seal, end-to-end recompute, plus a
+regression step asserting a mismatched pair exits non-zero.
 
 ## License
 

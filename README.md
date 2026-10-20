@@ -14,6 +14,9 @@
 4. **可验证**：报告旁可附 `tally-digest v1` 侧车——报告字节、逐段字节各留一个 sha256；
    `verify` 先查两份文件是否自洽，给齐词表与输入再**重新装配一遍**做逐字节复算。
    「报告说装了这些」因此可以被别人验，而不是只能相信。
+5. **可认账**（0.6.1）：摘要还能被一把共享密钥盖成 `tally-seal v1`，`verify --seal --key`
+   一次验完「摘要没被换」和「有人认过」。它证明持有密钥的人签过，**不证明谁写的**——
+   对称密钥没有身份，这一点写进格式而不是藏进文档。
 
 ```moonbit
 let segments = [
@@ -183,6 +186,12 @@ moon run cmd/main --target js -- digest --vocab tests/golden/sample-vocab.txt --
 
 # 校验：先查两份文件是否自洽；给齐 --vocab + 输入则再复算一遍并逐字节比对
 moon run cmd/main --target js -- verify --report report.txt --digest digest.txt --vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --text "hello world hello world"
+
+# 印记：用共享密钥把摘要认一遍（密钥不进输出；生产环境用 --key-file 而不是 --key）
+moon run cmd/main --target js -- seal --digest digest.txt --key ci-key --key-id ci
+
+# 带印记校验：自洽 + 印记 +（给齐输入时）端到端复算，三层一次走完
+moon run cmd/main --target js -- verify --report report.txt --digest digest.txt --seal seal.txt --key ci-key
 ```
 
 `--file <f>` 可替代 `--text <s>`（按字节读取，不假设 UTF-8 合法）。
@@ -194,7 +203,9 @@ moon run cmd/main --target js -- verify --report report.txt --digest digest.txt 
 error: report sha256 mismatch: digest says 317c0e78…, file is d7dd9d5b…
 ```
 
-退出码不是契约（MoonBit 核心库没有 `exit`），CI 按 stdout 判定（见下）。
+**退出码是契约**（0.6.1 起）：成功 `0`，任何失败 `1`。所以 `tally verify` 可以直接放进
+CI，不必再 grep 输出。0.6.0 及以前只打印 `error: ...` 却仍然 `exit 0`，那条路子已经
+被 `tools/check_examples.py` 与 CI 的 `verify (failure exits non-zero)` 步骤盯住。
 
 ## 示例（可运行、可 diff）
 
@@ -268,7 +279,7 @@ token 表可完全重建：
 
 ## 格式冻结（`FORMAT.lock`）
 
-四种对外文本格式都被逐字节钉死：
+五种对外文本格式都被逐字节钉死：
 
 | 格式 | 内容 | 冻结在哪 |
 |---|---|---|
@@ -276,6 +287,7 @@ token 表可完全重建：
 | `tally-plan v2` | 预算计划报告（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated}.txt` |
 | `tally-train v1` | 训练产物配方（`vocab/train_format.mbt`） | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
 | `tally-digest v1` | 报告摘要侧车（`budget/digest.mbt`） | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
+| `tally-seal v1` | 摘要的密钥印记（`budget/seal.mbt`） | `budget/seal_lock_wbtest.mbt` + `tests/golden/sample-seal.txt` |
 
 `FORMAT.lock` 记录每个样本的**字节数与 sha256**；`python tools/gen_format_lock.py --check`
 在样本或指纹对不上时失败。改格式实现会先让 MoonBit 测试变红，改样本会先让 `--check` 变红
@@ -306,21 +318,49 @@ plan <[segments] 正文的 sha256>
 - 段行按 `index` **升序**排列，与报告里 kept→truncated→dropped 的分节无关（对账前两侧各自排序）；
 - `dropped` 段的 sha 固定为 `-`：它没进窗口，没有"进了窗口的字节"可言；
 - 溢出哨兵 `-1` 也列进摘要且参与 `plan` 哈希（"溢出过"要可核对），但段对账时两侧都跳过它；
-- 换行先归一（CRLF→LF，尾部空行折叠），所以 Windows 控制台重定向写出的文件同样可验。
+- 换行先归一（UTF-8 BOM 去掉、CRLF→LF、尾部空行折叠），所以 Windows 控制台重定向与
+  编辑器写出的文件同样可验；UTF-16（PowerShell 5.1 的默认重定向编码）会被拒绝并提示另存为 UTF-8。
+
+### 印记格式 `tally-seal v1`
+
+摘要证明"内容没变"，印记证明"有人认过这份摘要"。五行，行序固定，`FORMAT.lock` 钉死：
+
+```text
+tally-seal v1
+scheme hmac-sha256
+key_id ci
+digest <摘要文件的 sha256>
+seal <HMAC-SHA256 hex>
+```
+
+规矩：
+
+- `seal` 覆盖**前四行（含头部）**，不覆盖自己——签名不可能覆盖自身；
+- `key_id` 也在这四行里：只改标识不重算 mac 就会失败（轮换密钥必须重新盖）；
+- 只认 `hmac-sha256`，别的 `scheme` 直接拒绝，不做"猜一个"的兼容；
+- 空密钥被拒：空密钥等于人人可签，印记就失去意义；
+- 它是**对称**的：证明持有同一把密钥的人认过，**不证明谁写的**。要证明身份需要非对称
+  签名与公钥分发，那是另一件事（见「非目标」）；
+- 密钥不进任何输出：印记文件可以入库、可以贴进工单，密钥只从 `--key-file`（或调用方
+  自己的密钥管理）注入，不走 `--key` 落进 shell 历史。
 
 `verify` 分两级，第二级才是"端到端"：
 
 | 级别 | 输入 | 能证明什么 |
 |---|---|---|
 | 自洽 | 报告 + 摘要 | 两份文件互相一致：报告字节未改、段数/动作/用了多少 token 对得上、`input_limit == window - reserve` |
+| 印记 | 再加 `--seal` + `--key`/`--key-file` | 这份摘要被某把共享密钥认过：摘要被换、`key_id` 被改、印记行被改、密钥不对，都失败 |
 | 端到端复算 | 再加 `--vocab` + 输入 | 拿同一份词表和输入**重新装配**，新报告与新摘要与旧文件**逐字节相同** |
 
-只有第二级能排除"两份文件一起被改得很自洽"。第一级抓不到的，第二级才抓得到；
-所以 CI 两级都跑。
+只有端到端那级能排除"两份文件一起被改得很自洽"。自洽抓不到的，复算才抓得到；
+印记则是另一维度：它不检查内容对不对，只检查"有没有人认过这份内容"。
+三层 CI 都跑。
 
 ## 非目标
 
 - 不做通用分词器：不提供 `o200k` 等第二编码，不做 BPE 之外的算法（WordPiece / Unigram）。
+- 不做公钥签名与身份体系：`tally-seal v1` 只有 HMAC-SHA256（对称），没有 Ed25519、
+  没有证书链、没有"谁签的"。它回答"有没有人认过"，不回答"是谁"。
 - 不做通用正则引擎——只为**固定的一条**预切分模式手写扫描器。
 - 不做性能优化：缓存与吞吐只给诚实数字，不设优化目标。
 - 不是某个库的 MoonBit 版。公开词表文件只作**验证语料与兼容性输入**。
@@ -358,7 +398,7 @@ python tools/gen_unicode.py            # Unicode 属性表
 python tools/gen_sample_vocab.py       # 测试夹具词表
 python tools/gen_pretoken_golden.py    # 预切分 golden
 python tools/gen_alignment_golden.py   # 逐 token 对齐 golden
-python tools/gen_format_lock.py        # FORMAT.lock 指纹（含 sample-train / sample-digest）
+python tools/gen_format_lock.py        # FORMAT.lock 指纹（含 sample-train / sample-digest / sample-seal）
 
 # 示例输出（改了报告格式或示例，需要 --update 并 review diff）
 python tools/check_examples.py
@@ -373,13 +413,16 @@ python tools/gen_format_lock.py --check
 python tools/check_examples.py
 ```
 
-当前规模：**7 个包、122 项测试**（含 6 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
+当前规模：**7 个包、148 项测试**（含 8 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
 矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
 矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**；
 矩阵 I（垃圾输入只能是成功或**可命名错误**）与矩阵 J（改一字节必须失败且带位置）在
-`vocab/robustness_wbtest.mbt`、`budget/digest_wbtest.mbt`；
-**4 个示例 + 4 条 CLI 用例**的真实输出逐字节入库（`examples/expected/`）。
-上述检查全部在 `.github/workflows/ci.yml` 里自动跑，含 `verify` 的自洽与端到端复算两步。
+`vocab/robustness_wbtest.mbt`、`budget/digest_wbtest.mbt`；HMAC 用 RFC 4231 的 6 组向量
+（`budget/hmac_wbtest.mbt`），印记的参考值由 Python `hmac` 独立算出后交叉验证；
+**7 条示例用例**的真实输出逐字节入库（`examples/expected/`），其中 2 条专测"必须失败"，
+并顺带断言退出码非零。
+上述检查全部在 `.github/workflows/ci.yml` 里自动跑：`verify` 的自洽、印记、端到端复算，
+外加"篡改后必须 exit 非零"的回归步骤。
 
 ## 许可
 

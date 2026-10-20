@@ -1,0 +1,5 @@
+tally-seal v1
+scheme hmac-sha256
+key_id ci
+digest 02c7bc2235cdc1bbc1b0df6df80f8b46d67cac94fadbd53dc945c794f39245af
+seal 4e34947f47021debf69b1eab4af6ea2d93b39cbc123212b8489840c37f44ac3c

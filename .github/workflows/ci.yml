@@ -66,8 +66,7 @@ jobs:
         run: python3 tools/check_examples.py
 
       # 校验入口本身也要被 CI 调用，否则"可审计"只是一句口号。
-      # 退出码不是契约（MoonBit 核心库没有 exit），所以按 stdout 判定：
-      # 只有逐字节等于 `verify ok` 才算通过。
+      # 0.6.1 起退出码是契约（成功 0 / 失败 1），这里同时断言退出码与 stdout。
       - name: verify (self-consistency)
         run: |
           out=$(moon run cmd/main --target wasm-gc -- verify \
@@ -75,6 +74,41 @@ jobs:
             --digest tests/golden/sample-digest.txt)
           test "$out" = "verify ok"
           echo "verify ok: report + digest agree"
+
+      # 反向：不配对的报告与摘要必须让**进程失败**，而不是打印一行错误后仍然 exit 0。
+      # 这条用例就是 0.6.0「退出码不是契约」那个问题的回归测试。
+      - name: verify (failure exits non-zero)
+        run: |
+          set -eu
+          if moon run cmd/main --target wasm-gc -- verify \
+               --report tests/golden/sample-plan.txt \
+               --digest tests/golden/sample-digest-overflow.txt; then
+            echo "expected verify to fail on a mismatched pair, but it exited 0" >&2
+            exit 1
+          fi
+          echo "mismatched pair: verify exited non-zero as expected"
+
+      # 印记：摘要被密钥认过一次；同一把 key 必须通过，换一把必须失败。
+      - name: verify (seal)
+        run: |
+          set -eu
+          tmp=$(mktemp -d)
+          printf 'hello world hello world' > "$tmp/payload.txt"
+          args="--vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --file $tmp/payload.txt"
+          moon run cmd/main --target wasm-gc -- fit $args > "$tmp/report.txt"
+          moon run cmd/main --target wasm-gc -- digest $args > "$tmp/digest.txt"
+          moon run cmd/main --target wasm-gc -- seal \
+            --digest "$tmp/digest.txt" --key ci-key --key-id ci > "$tmp/seal.txt"
+          moon run cmd/main --target wasm-gc -- verify \
+            --report "$tmp/report.txt" --digest "$tmp/digest.txt" \
+            --seal "$tmp/seal.txt" --key ci-key
+          if moon run cmd/main --target wasm-gc -- verify \
+               --report "$tmp/report.txt" --digest "$tmp/digest.txt" \
+               --seal "$tmp/seal.txt" --key wrong-key; then
+            echo "expected a wrong seal key to fail, but it exited 0" >&2
+            exit 1
+          fi
+          echo "seal: sealed digest verifies, wrong key rejected"
 
       # 端到端复算：报告与摘要由当次装配重新生成，`verify` 必须逐字节还原两者。
       - name: verify (end-to-end recompute)

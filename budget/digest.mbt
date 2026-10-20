@@ -389,15 +389,20 @@ fn parse_report(report : String) -> ReportFacts raise DigestError {
 }
 
 ///|
-/// 把 CRLF 归一成 LF。
+/// 把文件里的"编辑产物"归一到规范形：去 UTF-8 BOM、CRLF 归一成 LF、结尾只留一个换行。
 ///
-/// 为什么需要：格式里只有 LF，但 Windows 控制台重定向会把 LF 写成 CRLF。
-/// 如果不归一，"报告在磁盘上"和"报告被哈希时"就是两份不同的字节，
+/// 为什么需要：格式里只有 LF，但 Windows 控制台重定向会把 LF 写成 CRLF；
+/// 编辑器（含 PowerShell 的 `Out-File -Encoding utf8`）还会在开头写 BOM。
+/// 如果不归一，"文件在磁盘上"和"文件被哈希时"就是两份不同的字节，
 /// 校验会在没被篡改的文件上失败——那是误报，比漏报更难查。
 pub fn normalize_newlines(text : String) -> String {
   let chars = text.to_array()
   let out : Array[Char] = []
   let mut i = 0
+  // BOM 不是正文：留着会让"第一行是 tally-digest v1"变成"第一行多了个隐形字符"。
+  if chars.length() > 0 && chars[0] == '\u{FEFF}' {
+    i = 1
+  }
   while i < chars.length() {
     if chars[i] == '\r' && i + 1 < chars.length() && chars[i + 1] == '\n' {
       out.push('\n')

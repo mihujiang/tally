@@ -5,6 +5,10 @@
 //
 // `fn main` 内不允许调用会抛错（raise）的函数，因此实际逻辑放在
 // `run` 里，由 `main` 统一 `try/catch`。
+//
+// **退出码是契约**：成功 0，任何失败 1（`@sys.exit`）。0.6.0 以前只保证
+// 文案清楚、进程仍返回 0，于是 `tally verify` 在 CI 里"总是成功"——
+// 这不是一个能被人依赖的行为，0.6.1 起改掉。
 
 ///|
 /// 严格解析非负整数：非法输入直接报错，不静默回落成 0
@@ -41,17 +45,32 @@ fn usage() -> Unit {
     "  tally digest --vocab <file> --limit <n> [--reserve <n>] [--truncate ...] [--file <f>]",
   )
   println(
-    "  tally verify --report <f> --digest <f> [--vocab <file> --limit <n> --file <f>]",
+    "  tally verify --report <f> --digest <f> [--seal <f> --key <s>|--key-file <f>] [--vocab <file> --limit <n> --file <f>]",
+  )
+  println(
+    "  tally seal   --digest <f> (--key <s> | --key-file <f>) [--key-id <id>]",
   )
 }
 
 ///|
+/// 统一 exit：成功 0、失败 1。`run` 里所有错误都经这里变成进程退出码，
+/// 这样 `tally verify` 在 CI 里失败就是失败，不必再 grep 输出。
 fn main {
-  try {
+  let status = try {
     run(@env.args())
+    0
   } catch {
-    Failure::Failure(msg) => println("error: " + msg)
-    e => println("error: " + e.to_string())
+    Failure::Failure(msg) => {
+      println("error: " + msg)
+      1
+    }
+    e => {
+      println("error: " + e.to_string())
+      1
+    }
+  }
+  if status != 0 {
+    @sys.exit(status)
   }
 }
 
@@ -67,11 +86,20 @@ fn run(args : Array[String]) -> Unit raise {
   let mut explain = false
   let mut report_path : String? = None
   let mut digest_path : String? = None
+  let mut seal_path : String? = None
+  let mut key : String? = None
+  let mut key_file : String? = None
+  let mut key_id = ""
   let mut i = 0
   while i < args.length() {
     let a = args[i]
     let has_next = i + 1 < args.length()
-    if a == "count" || a == "encode" || a == "fit" || a == "digest" || a == "verify" {
+    if a == "count" ||
+      a == "encode" ||
+      a == "fit" ||
+      a == "digest" ||
+      a == "verify" ||
+      a == "seal" {
       cmd = a
       i = i + 1
     } else if a == "--report" && has_next {
@@ -79,6 +107,18 @@ fn run(args : Array[String]) -> Unit raise {
       i = i + 2
     } else if a == "--digest" && has_next {
       digest_path = Some(args[i + 1])
+      i = i + 2
+    } else if a == "--seal" && has_next {
+      seal_path = Some(args[i + 1])
+      i = i + 2
+    } else if a == "--key" && has_next {
+      key = Some(args[i + 1])
+      i = i + 2
+    } else if a == "--key-file" && has_next {
+      key_file = Some(args[i + 1])
+      i = i + 2
+    } else if a == "--key-id" && has_next {
+      key_id = args[i + 1]
       i = i + 2
     } else if a == "--vocab" && has_next {
       vocab_path = Some(args[i + 1])
@@ -119,6 +159,35 @@ fn run(args : Array[String]) -> Unit raise {
     usage()
     return
   }
+  // 盖章：只对摘要文件盖，不重复生成摘要——"生成"与"认过"是两件事。
+  if cmd == "seal" {
+    let digest_file = match digest_path {
+      Some(p) => p
+      None => raise Failure::Failure("seal needs --digest <f>")
+    }
+    if !@fs.path_exists(digest_file) {
+      raise Failure::Failure("digest file not found: " + digest_file)
+    }
+    let digest_text = @budget.normalize_newlines(@fs.read_file_to_string(digest_file))
+    let k = resolve_key(key, key_file)
+    match @tally.seal_digest(digest_text, k, key_id) {
+      Ok(text) => println(chomp(text))
+      Err(msg) => raise Failure::Failure(msg)
+    }
+    return
+  }
+  // 只给了密钥却没给印记：多半是以为"带了 key 就会验"，直接点破。
+  match seal_path {
+    Some(_) => ()
+    None =>
+      match (key, key_file) {
+        (Some(_), _) =>
+          raise Failure::Failure("--key / --key-file only make sense with --seal")
+        (_, Some(_)) =>
+          raise Failure::Failure("--key / --key-file only make sense with --seal")
+        _ => ()
+      }
+  }
   // verify 的 vocab 是可选的：不带 vocab 时只做"报告与摘要自洽"，
   // 带上 vocab + 输入时才重跑一遍做"端到端复算"。
   if cmd == "verify" {
@@ -136,16 +205,31 @@ fn run(args : Array[String]) -> Unit raise {
     if !@fs.path_exists(digest_file) {
       raise Failure::Failure("digest file not found: " + digest_file)
     }
-    let report = @budget.normalize_newlines(@fs.read_file_to_string(report_file))
-    let digest_text = @budget.normalize_newlines(@fs.read_file_to_string(digest_file))
+    let report = @budget.normalize_newlines(read_text_file(report_file))
+    let digest_text = @budget.normalize_newlines(read_text_file(digest_file))
     match @budget.verify_report(report, digest_text) {
       Ok(_) => ()
       Err(msg) => raise Failure::Failure(msg)
     }
+    // 印记：证明"这份摘要被某把密钥认过"，与"摘要和报告自洽"是两件事，分开报。
+    match seal_path {
+      Some(sp) => {
+        if !@fs.path_exists(sp) {
+          raise Failure::Failure("seal file not found: " + sp)
+        }
+        let seal_text = @budget.normalize_newlines(read_text_file(sp))
+        let k = resolve_key(key, key_file)
+        match @tally.verify_seal(digest_text, seal_text, k) {
+          Ok(_) => ()
+          Err(msg) => raise Failure::Failure(msg)
+        }
+      }
+      None => ()
+    }
     // 端到端复算：策略与输入都给齐时，重跑一遍必须逐字节还原报告与摘要。
     match (vocab_path, file) {
       (Some(vf), Some(input_file)) => {
-        let vocab = @tally.load(@fs.read_file_to_string(vf))
+        let vocab = @tally.load(read_text_file(vf))
         let plan = make_plan(
           vocab,
           @fs.read_file_to_bytes(input_file),
@@ -182,7 +266,7 @@ fn run(args : Array[String]) -> Unit raise {
   if !@fs.path_exists(vocab_file) {
     raise Failure::Failure("vocab file not found: " + vocab_file)
   }
-  let vocab = @tally.load(@fs.read_file_to_string(vocab_file))
+  let vocab = @tally.load(read_text_file(vocab_file))
   let input_bytes = match file {
     Some(f) => @fs.read_file_to_bytes(f)
     None =>
@@ -290,4 +374,65 @@ fn chomp(s : String) -> String {
     n = n - 1
   }
   String::from_array(chars[0:n].to_owned())
+}
+
+///|
+/// 读文本文件，并对 Windows 上最常见的坑给明确提示：PowerShell 5.1 的 `>` 默认写 UTF-16，
+/// 那种文件读成 UTF-8 只会得到乱码行，报"头部不认识"等于没说。
+fn read_text_file(path : String) -> String raise {
+  let raw = @fs.read_file_to_bytes(path)
+  if raw.length() >= 2 {
+    let b0 = raw.unsafe_get(0).to_int() & 0xFF
+    let b1 = raw.unsafe_get(1).to_int() & 0xFF
+    if (b0 == 0xFF && b1 == 0xFE) || (b0 == 0xFE && b1 == 0xFF) {
+      raise Failure::Failure(
+        path +
+        " looks like UTF-16 (BOM found); save it as UTF-8, e.g. `... | Out-File -Encoding utf8`",
+      )
+    }
+  }
+  @fs.read_file_to_string(path)
+}
+
+///|
+/// 去掉结尾的所有换行：`echo` 与多数编辑器都会补一个，留着就会让密钥多一位。
+fn trim_trailing_newlines(s : String) -> String {
+  let chars = s.to_array()
+  let mut n = chars.length()
+  while n > 0 && (chars[n - 1] == '\n' || chars[n - 1] == '\r') {
+    n = n - 1
+  }
+  if n == chars.length() {
+    s
+  } else {
+    String::from_array(chars[0:n].to_owned())
+  }
+}
+
+///|
+/// 密钥来源：`--key` 直接给，或 `--key-file` 读文件。
+/// 空密钥一律拒绝——空密钥等于人人可签，印记就失去意义。
+fn resolve_key(key : String?, key_file : String?) -> String raise {
+  match key {
+    Some(k) =>
+      if k == "" {
+        raise Failure::Failure("--key must not be empty")
+      } else {
+        k
+      }
+    None =>
+      match key_file {
+        Some(f) => {
+          if !@fs.path_exists(f) {
+            raise Failure::Failure("key file not found: " + f)
+          }
+          let raw = trim_trailing_newlines(read_text_file(f))
+          if raw == "" {
+            raise Failure::Failure("key file is empty: " + f)
+          }
+          raw
+        }
+        None => raise Failure::Failure("--key <s> or --key-file <f> is required")
+      }
+  }
 }

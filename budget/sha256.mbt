@@ -1,7 +1,8 @@
-// SHA-256（FIPS 180-4）的最小实现，只服务于本包的摘要（`tally-digest v1`）。
+// SHA-256（FIPS 180-4）的最小实现，只服务于本包的摘要（`tally-digest v1`）
+// 与印记（`tally-seal v1`，走 `hmac.mbt` 的 HMAC-SHA256）。
 //
 // 为什么自带：核心包的纪律是零第三方依赖，摘要不能为了省 120 行而破例。
-// 只实现单向压缩 + hex 编码，没有 HMAC / 流式接口——用在不需要的地方就是负债。
+// 只有单向压缩 + hex 编码，没有流式接口——用在不需要的地方就是负债。
 
 ///|
 let k_sha256 : Array[UInt] = [
@@ -107,8 +108,11 @@ fn compress(h : Array[UInt], block : Array[Byte], off : Int) -> Unit {
 }
 
 ///|
-/// 对任意字节序列求 SHA-256，返回 64 位小写 hex。
-pub fn sha256_hex(bytes : Bytes) -> String {
+/// 对任意字节序列求 SHA-256，返回 32 字节原始摘要。
+///
+/// 与 `sha256_hex` 并存是为了 HMAC：它要把内层哈希当**字节**再喂进外层，
+/// 走 hex 再解回来既多余又容易在编码上出岔子。
+pub fn sha256_bytes(bytes : Bytes) -> Bytes {
   let h : Array[UInt] = [
     0x6A09E667U, 0xBB67AE85U, 0x3C6EF372U, 0xA54FF53AU, 0x510E527FU, 0x9B05688CU,
     0x1F83D9ABU, 0x5BE0CD19U,
@@ -119,11 +123,24 @@ pub fn sha256_hex(bytes : Bytes) -> String {
     compress(h, padded, off)
     off = off + 64
   }
-  let out : Array[Char] = []
+  let out : Array[Byte] = []
   for i = 0; i < 8; i = i + 1 {
-    for s = 28; s >= 0; s = s - 4 {
-      out.push(hex_alphabet[((h[i] >> s) & 0xFU).reinterpret_as_int()])
+    for s = 24; s >= 0; s = s - 8 {
+      out.push(((h[i] >> s) & 0xFFU).reinterpret_as_int().to_byte())
     }
+  }
+  Bytes::from_array(out)
+}
+
+///|
+/// 对任意字节序列求 SHA-256，返回 64 位小写 hex。
+pub fn sha256_hex(bytes : Bytes) -> String {
+  let digest = sha256_bytes(bytes)
+  let out : Array[Char] = []
+  for i = 0; i < digest.length(); i = i + 1 {
+    let b = digest.unsafe_get(i).to_int() & 0xFF
+    out.push(hex_alphabet[b >> 4])
+    out.push(hex_alphabet[b & 0xF])
   }
   String::from_array(out)
 }

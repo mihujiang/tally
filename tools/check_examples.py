@@ -128,6 +128,148 @@ CASES = [
         ],
         "expected": "examples/expected/cli-verify-mismatch.txt",
     },
+    # 印记：把摘要交给密钥认一次。key 只出现在命令行里，**不写进任何输出**——
+    # 印记文件可以进仓库、可以贴进工单，密钥不行。
+    {
+        "name": "cli-seal",
+        "steps": [
+            {"write": {"name": "payload.txt", "text": "hello world hello world"}},
+            {
+                "capture": cli(
+                    "digest",
+                    "--vocab",
+                    VOCAB,
+                    *FIT_ARGS,
+                    "--file",
+                    "{tmp}/payload.txt",
+                ),
+                "into": "digest.txt",
+            },
+            {
+                "run": cli(
+                    "seal",
+                    "--digest",
+                    "{tmp}/digest.txt",
+                    "--key",
+                    "ci-key",
+                    "--key-id",
+                    "ci",
+                ),
+            },
+        ],
+        "expected": "examples/expected/cli-seal.txt",
+    },
+    # 正向：报告 + 摘要 + 印记三者对齐，`verify` 走完自洽与印记两层。
+    {
+        "name": "cli-verify-seal",
+        "steps": [
+            {"write": {"name": "payload.txt", "text": "hello world hello world"}},
+            {
+                "capture": cli(
+                    "fit",
+                    "--vocab",
+                    VOCAB,
+                    *FIT_ARGS,
+                    "--file",
+                    "{tmp}/payload.txt",
+                ),
+                "into": "report.txt",
+            },
+            {
+                "capture": cli(
+                    "digest",
+                    "--vocab",
+                    VOCAB,
+                    *FIT_ARGS,
+                    "--file",
+                    "{tmp}/payload.txt",
+                ),
+                "into": "digest.txt",
+            },
+            {
+                "capture": cli(
+                    "seal",
+                    "--digest",
+                    "{tmp}/digest.txt",
+                    "--key",
+                    "ci-key",
+                    "--key-id",
+                    "ci",
+                ),
+                "into": "seal.txt",
+            },
+            {
+                "run": cli(
+                    "verify",
+                    "--report",
+                    "{tmp}/report.txt",
+                    "--digest",
+                    "{tmp}/digest.txt",
+                    "--seal",
+                    "{tmp}/seal.txt",
+                    "--key",
+                    "ci-key",
+                ),
+            },
+        ],
+        "expected": "examples/expected/cli-verify-seal.txt",
+    },
+    # 反向：密钥不对时不能"通过"，且要同时打出印记里的 mac 与重算的 mac。
+    {
+        "name": "cli-verify-seal-mismatch",
+        "steps": [
+            {"write": {"name": "payload.txt", "text": "hello world hello world"}},
+            {
+                "capture": cli(
+                    "fit",
+                    "--vocab",
+                    VOCAB,
+                    *FIT_ARGS,
+                    "--file",
+                    "{tmp}/payload.txt",
+                ),
+                "into": "report.txt",
+            },
+            {
+                "capture": cli(
+                    "digest",
+                    "--vocab",
+                    VOCAB,
+                    *FIT_ARGS,
+                    "--file",
+                    "{tmp}/payload.txt",
+                ),
+                "into": "digest.txt",
+            },
+            {
+                "capture": cli(
+                    "seal",
+                    "--digest",
+                    "{tmp}/digest.txt",
+                    "--key",
+                    "ci-key",
+                    "--key-id",
+                    "ci",
+                ),
+                "into": "seal.txt",
+            },
+            {
+                "run": cli(
+                    "verify",
+                    "--report",
+                    "{tmp}/report.txt",
+                    "--digest",
+                    "{tmp}/digest.txt",
+                    "--seal",
+                    "{tmp}/seal.txt",
+                    "--key",
+                    "wrong-key",
+                ),
+                "allow_failure": True,
+            },
+        ],
+        "expected": "examples/expected/cli-verify-seal-mismatch.txt",
+    },
 ]
 
 
@@ -141,6 +283,10 @@ def run(cmd: list[str], cwd: Path, allow_failure: bool = False) -> str:
         sys.stderr.write(proc.stderr.decode("utf-8", "replace"))
         sys.stderr.write(proc.stdout.decode("utf-8", "replace"))
         raise SystemExit(f"命令失败（{proc.returncode}）：{' '.join(cmd)}")
+    # 退出码也是契约：`allow_failure` 的步骤必须真的失败，否则"校验失败"就变成了
+    # "打印了一行错误但进程仍然成功"——CI 会把它当作通过。
+    if proc.returncode == 0 and allow_failure:
+        raise SystemExit(f"命令本应失败但返回 0：{' '.join(cmd)}")
     # Windows 下 println 会带 CRLF；报告格式以 LF 为准，统一后再比较。
     return proc.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
 

@@ -13,6 +13,9 @@
 4. `tally-digest v1` —— 报告摘要侧车（`report <sha256>` + `plan <sha256>` +
    `[segments]`，每行 `index action sha|-`）。它和报告是两份文件，冻结它是
    为了让"校验口径"本身也可长期 diff。
+5. `tally-seal v1` —— 摘要上的密钥印记（`scheme` / `key_id` / `digest` /
+   `seal` 四行，HMAC-SHA256 覆盖前四行）。它是"谁认过这份摘要"的唯一凭据，
+   字节一变就该验不过，所以和摘要一样冻结。
 
 怎么保证不漂移
 --------------
@@ -44,6 +47,7 @@ LOCK = ROOT / "FORMAT.lock"
 PLAN_SRC = ROOT / "format_lock_wbtest.mbt"
 TRAIN_SRC = ROOT / "vocab" / "train_lock_wbtest.mbt"
 DIGEST_SRC = ROOT / "budget" / "digest_lock_wbtest.mbt"
+SEAL_SRC = ROOT / "budget" / "seal_lock_wbtest.mbt"
 VOCAB_SAMPLE = ROOT / "tests" / "golden" / "sample-vocab.txt"
 PLAN_SAMPLE = ROOT / "tests" / "golden" / "sample-plan.txt"
 PLAN_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-overflow.txt"
@@ -52,6 +56,7 @@ TRAIN_SAMPLE = ROOT / "tests" / "golden" / "sample-train.txt"
 DIGEST_SAMPLE = ROOT / "tests" / "golden" / "sample-digest.txt"
 DIGEST_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-digest-overflow.txt"
 DIGEST_TRUNCATED_SAMPLE = ROOT / "tests" / "golden" / "sample-digest-truncated.txt"
+SEAL_SAMPLE = ROOT / "tests" / "golden" / "sample-seal.txt"
 
 GENERATOR = "tools/gen_format_lock.py"
 
@@ -66,6 +71,7 @@ HEADER = f"""\
 #   tally-plan  v2   预算计划报告（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #   tally-digest v1  报告摘要侧车，校验口径（budget/digest.mbt）
+#   tally-seal  v1   摘要的密钥印记，HMAC-SHA256（budget/seal.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
 # 内容断言在 MoonBit 测试里，改实现先红的是测试，不是这张表。
@@ -108,6 +114,7 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
     plan_src = PLAN_SRC.read_text(encoding="utf-8")
     train_src = TRAIN_SRC.read_text(encoding="utf-8")
     digest_src = DIGEST_SRC.read_text(encoding="utf-8")
+    seal_src = SEAL_SRC.read_text(encoding="utf-8")
     mixed = extract_mbt_string(plan_src, "frozen_plan_mixed", PLAN_SRC)
     overflow = extract_mbt_string(plan_src, "frozen_plan_overflow", PLAN_SRC)
     truncated = extract_mbt_string(plan_src, "frozen_plan_truncated", PLAN_SRC)
@@ -115,6 +122,7 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
     d_mixed = extract_mbt_string(digest_src, "frozen_digest_mixed", DIGEST_SRC)
     d_overflow = extract_mbt_string(digest_src, "frozen_digest_overflow", DIGEST_SRC)
     d_truncated = extract_mbt_string(digest_src, "frozen_digest_truncated", DIGEST_SRC)
+    sealed = extract_mbt_string(seal_src, "frozen_seal_mixed", SEAL_SRC)
     if not VOCAB_SAMPLE.exists():
         raise SystemExit(f"missing {VOCAB_SAMPLE}; run tools/gen_sample_vocab.py first")
     return [
@@ -130,6 +138,7 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
         ("tally-digest v1", DIGEST_SAMPLE, d_mixed),
         ("tally-digest v1", DIGEST_OVERFLOW_SAMPLE, d_overflow),
         ("tally-digest v1", DIGEST_TRUNCATED_SAMPLE, d_truncated),
+        ("tally-seal v1", SEAL_SAMPLE, sealed),
     ]
 
 

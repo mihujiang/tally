@@ -199,3 +199,57 @@ test "single import can produce and verify a digest" {
     }
   }
 }
+
+///|
+/// 0.6.1 的门面承诺：单 import 就能把摘要盖成印记再验回来——
+/// 调用方不需要认识 `budget` 的 `SealError`，也不需要自己实现 HMAC。
+test "single import can seal a digest and verify the seal" {
+  let segments = [
+    @tally.pinned("system", "sys"),
+    @tally.newest("payload", "0123456789"),
+  ]
+  let cfg = @tally.fit_config(@tally.estimate(1), 8L).with_reserve(2L)
+  let plan = try {
+    @tally.fit_with(cfg, segments)
+  } catch {
+    _ => panic()
+  }
+  let digest = @tally.render_digest(plan)
+  let seal = match @tally.seal_digest(digest, "ci-key", "ci") {
+    Ok(text) => text
+    Err(msg) => {
+      println(msg)
+      panic()
+    }
+  }
+  assert_true(seal.has_prefix("tally-seal v1\n"))
+  assert_true(seal.contains("scheme hmac-sha256\n"))
+  assert_true(seal.contains("key_id ci\n"))
+
+  match @tally.verify_seal(digest, seal, "ci-key") {
+    Ok(_) => ()
+    Err(msg) => {
+      println(msg)
+      panic()
+    }
+  }
+
+  // 摘要被换：印记必须拒绝，并点名"seal 里记的摘要"与"实际摘要"两个 sha256
+  let swapped = digest.replace(old="plan ", new="plan 0")
+  match @tally.verify_seal(swapped, seal, "ci-key") {
+    Ok(_) => panic()
+    Err(msg) => assert_true(msg.contains("seal digest mismatch"))
+  }
+
+  // 密钥不对：错误必须落在"印记不符"，而不是"摘要不符"——两者要能分开定位
+  match @tally.verify_seal(digest, seal, "wrong-key") {
+    Ok(_) => panic()
+    Err(msg) => assert_true(msg.contains("seal mismatch"))
+  }
+
+  // 空密钥必须被拒：空密钥等于人人可签
+  match @tally.seal_digest(digest, "", "ci") {
+    Ok(_) => panic()
+    Err(msg) => assert_true(msg.contains("must not be empty"))
+  }
+}

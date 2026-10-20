@@ -5,6 +5,8 @@ target/
 target
 .mooncakes/
 .moonagent/
+# moon 每次构建都会重写的接口摘要，属产物不属源码，clean 后自动再生
+pkg.generated.mbti
 
 # --- 发布包内容只能靠 .gitignore 控制（moon.mod 没有 exclude 字段）---
 # 计划、申报书、草稿一律不进仓库
