@@ -51,6 +51,9 @@ pub fn load(text : String) -> Vocab raise VocabError {
   let specials : Array[(String, Int)] = []
   let mut section = 0 // 0=未开始 1=specials 2=tokens
   let mut line_no = 0
+  // 字节序列 -> 首次出现的行号。重复检测在解析阶段做，报错才带行号；
+  // build_vocab 里的同一不变量检查留作兜底。
+  let first_line : Map[Bytes, Int] = Map([])
   for raw in text.split("\n") {
     line_no = line_no + 1
     let line = raw.trim()
@@ -91,6 +94,10 @@ pub fn load(text : String) -> Vocab raise VocabError {
             raise MalformedLine(line_no, line.to_owned())
           }
           let bytes = b64_decode(parts[2])
+          match first_line.get(bytes) {
+            Some(prev) => raise DuplicateToken(prev, line_no)
+            None => first_line.set(bytes, line_no)
+          }
           tokens.push(bytes)
           ranks.set(bytes, rank)
         }
@@ -114,6 +121,10 @@ pub fn load_tiktoken(
   let pairs : Array[(Bytes, Int)] = []
   let mut max_rank = -1
   let mut line_no = 0
+  let first_line : Map[Bytes, Int] = Map([])
+  // rank -> 行号。两个人抢同一个 rank 时，如果只保留后者，词表里就会
+  // 出现"ranks 有它、tokens 没有它"的错位——那不是词表，那是数据事故。
+  let rank_line : Map[Int, Int] = Map([])
   for raw in text.split("\n") {
     line_no = line_no + 1
     let line = raw.trim()
@@ -125,9 +136,25 @@ pub fn load_tiktoken(
       raise MalformedLine(line_no, line.to_owned())
     }
     let bytes = b64_decode(parts[0])
+    match first_line.get(bytes) {
+      Some(prev) => raise DuplicateToken(prev, line_no)
+      None => first_line.set(bytes, line_no)
+    }
     match parse_dec(parts[1]) {
       None => raise MalformedLine(line_no, line.to_owned())
       Some(rank) => {
+        match rank_line.get(rank) {
+          Some(prev) =>
+            raise MalformedLine(
+              line_no,
+              "duplicate rank " +
+              rank.to_string() +
+              " (already on line " +
+              prev.to_string() +
+              ")",
+            )
+          None => rank_line.set(rank, line_no)
+        }
         pairs.push((bytes, rank))
         if rank > max_rank {
           max_rank = rank
@@ -147,7 +174,7 @@ pub fn load_tiktoken(
   for i = 0; i < n; i = i + 1 {
     match slots[i] {
       Some(b) => tokens.push(b)
-      None => raise MalformedLine(0, "rank 不连续")
+      None => raise MalformedLine(0, "rank gap: no token for rank " + i.to_string())
     }
   }
   build_vocab(tokens, ranks, specials)

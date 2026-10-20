@@ -7,6 +7,7 @@
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
 #   tally-plan  v2   预算计划报告（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
+#   tally-digest v1  报告摘要侧车，校验口径（budget/digest.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
 # 内容断言在 MoonBit 测试里，改实现先红的是测试，不是这张表。
@@ -17,3 +18,6 @@ tally-plan v2  	tests/golden/sample-plan.txt    	    315	d7dd9d5b3be1ca3b079fa99
 tally-plan v2  	tests/golden/sample-plan-overflow.txt	    261	317c0e78e5a7d403982f7bc1d39594b489db6da04cbea75ab88a21f498d66662
 tally-plan v2  	tests/golden/sample-plan-truncated.txt	    186	78b45e9a03b4464202decb31cc4ccbcb551312ec8a12db6a1f4050c3127efadf
 tally-train v1 	tests/golden/sample-train.txt   	    641	b6fe732be81a49f662223bbc55c506f8935b8ced2539c8f1e0fc856c25db8d6f
+tally-digest v1	tests/golden/sample-digest.txt  	    337	3e8f5ace11c2a7824653fb0e43e4824e970b6fc370d29782922a63061134f155
+tally-digest v1	tests/golden/sample-digest-overflow.txt	    254	5fdbe9602dc248fbf60a9398fd9696283cc5c7f5c42c46398bb44927c0299515
+tally-digest v1	tests/golden/sample-digest-truncated.txt	    318	a9793d628de80d94a8ee97b54dbc73f0d09d41521a44f326b107ad41ab2a378a

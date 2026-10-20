@@ -61,8 +61,34 @@ jobs:
           python3 tools/gen_format_lock.py --check
 
       # 示例的真实输出逐字节比对：报告是规范文本，所以可以当指纹用。
+      # 正向（verify ok）与反向（verify 必须报出对不上的两个 sha256）都在这里。
       - name: examples
         run: python3 tools/check_examples.py
+
+      # 校验入口本身也要被 CI 调用，否则"可审计"只是一句口号。
+      # 退出码不是契约（MoonBit 核心库没有 exit），所以按 stdout 判定：
+      # 只有逐字节等于 `verify ok` 才算通过。
+      - name: verify (self-consistency)
+        run: |
+          out=$(moon run cmd/main --target wasm-gc -- verify \
+            --report tests/golden/sample-plan.txt \
+            --digest tests/golden/sample-digest.txt)
+          test "$out" = "verify ok"
+          echo "verify ok: report + digest agree"
+
+      # 端到端复算：报告与摘要由当次装配重新生成，`verify` 必须逐字节还原两者。
+      - name: verify (end-to-end recompute)
+        run: |
+          set -eu
+          tmp=$(mktemp -d)
+          printf 'hello world hello world' > "$tmp/payload.txt"
+          args="--vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --file $tmp/payload.txt"
+          moon run cmd/main --target wasm-gc -- fit $args > "$tmp/report.txt"
+          moon run cmd/main --target wasm-gc -- digest $args > "$tmp/digest.txt"
+          out=$(moon run cmd/main --target wasm-gc -- verify \
+            --report "$tmp/report.txt" --digest "$tmp/digest.txt" $args)
+          test "$out" = "verify ok"
+          echo "recomputed: report $(wc -c < "$tmp/report.txt") bytes, digest $(wc -c < "$tmp/digest.txt") bytes"
 
       # 发布包能被打出来（不发布、不需要凭据）。
       - name: package

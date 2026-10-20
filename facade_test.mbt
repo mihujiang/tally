@@ -158,3 +158,44 @@ test "single import can choose truncation strategy" {
   let _ = @tally.truncate_none()
   let _ = @tally.truncate_head()
 }
+
+///|
+/// 可验证性也必须能单 import 用起来：产出摘要侧车 + 校验它。
+/// 这条测试和 `cli-verify-ok` 是一对——一个证明"使用者能做"，一个证明"CLI 做了"。
+test "single import can produce and verify a digest" {
+  let segments = [
+    @tally.pinned("system", "sys"),
+    @tally.newest("payload", "0123456789"),
+  ]
+  let cfg = @tally.fit_config(@tally.estimate(1), 8L).with_reserve(2L)
+  let plan = try {
+    @tally.fit_with(cfg, segments)
+  } catch {
+    _ => panic()
+  }
+  let report = plan.render()
+  let digest = @tally.render_digest(plan)
+  assert_true(digest.has_prefix("tally-digest v1\n"))
+  assert_true(digest.contains("report "))
+  assert_true(digest.contains("[segments]"))
+
+  // 自洽：同一份计划产出的两份文件必须互相通过
+  match @tally.verify_report(report, digest) {
+    Ok(_) => ()
+    Err(msg) => {
+      println(msg)
+      panic()
+    }
+  }
+
+  // 报告被改一个字符：必须失败，且错误里带着两个人能核对的 sha256
+  let tampered = report.replace(old="input_limit 6", new="input_limit 7")
+  match @tally.verify_report(tampered, digest) {
+    Ok(_) => panic()
+    Err(msg) => {
+      assert_true(msg.contains("report sha256 mismatch"))
+      assert_true(msg.contains("digest says "))
+      assert_true(msg.contains(", file is "))
+    }
+  }
+}

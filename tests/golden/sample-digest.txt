@@ -1,0 +1,8 @@
+tally-digest v1
+report d7dd9d5b3be1ca3b079fa999cabbf0b613e5a14c8514fea856dbbc329ba9acbe
+plan 1c34c7228212ecffb3551f8f8b2b4a42a6f07dca135a0d4dd1e95daa3eee2e25
+[segments]
+0 kept 518b67e652531c5fe7e25d6b2c3b4ef6224e7d90da2091967dd47eb082b26a19
+1 dropped -
+2 dropped -
+3 kept fa3ba64f2053ed06fc34ef5d5888983ca6ee22c7bd7d3d67d48b3faf8eac3a89

@@ -3,7 +3,7 @@
 
 name = "weopqrst/tally"
 
-version = "0.5.0"
+version = "0.6.0"
 
 readme = "README.md"
 
@@ -15,7 +15,7 @@ keywords = ["context-window", "budget", "truncation", "tokenizer", "llm"]
 
 preferred_target = "wasm-gc"
 
-description = "Context-budget engine for MoonBit LLM apps: pluggable counters, window/reserve model, priority-based assembly with truncation, and explainable, reproducible reports."
+description = "Context-budget engine for MoonBit LLM apps: pluggable counters, window/reserve model, priority-based assembly with truncation, and explainable, reproducible, verifiable reports (tally-plan + tally-digest)."
 
 // 只有卫星包（cmd/main）使用 x/fs 做 IO；核心包零第三方依赖。
 import {

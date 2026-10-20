@@ -24,6 +24,8 @@ pub using @budget {
   type FitConfig,
   type TruncateStrategy,
   type FitError,
+  type DigestError,
+  type PlanDigest,
 }
 
 ///|
@@ -158,6 +160,26 @@ pub fn fit_with_result(
   } catch {
     @budget.ReserveExceedsWindow(reserve, window) => Err((reserve, window))
   }
+}
+
+///|
+/// 计划的摘要侧车（`tally-digest v1` 文本），与 `plan.render()` 配对。
+///
+/// 报告给人读，摘要给机器验：报告字节一个 sha256、每段进了窗口的字节各一个。
+pub fn render_digest(plan : @budget.Plan) -> String {
+  @budget.Plan::render_digest(plan)
+}
+
+///|
+/// 校验报告与摘要是否自洽。
+///
+/// `Ok(())` 或者一句带位置的 `Err`（哪个文件、第几行、两个 sha256 各是什么）。
+/// 这里返回 `Result` 而不是 `raise`，理由同 `fit_with_result`。
+pub fn verify_report(
+  report : String,
+  digest_text : String,
+) -> Result[Unit, String] {
+  @budget.verify_report(report, digest_text)
 }
 
 ///|

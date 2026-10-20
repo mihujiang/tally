@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""生成并校验 `FORMAT.lock`：三种规范文本格式的逐字节指纹。
+"""生成并校验 `FORMAT.lock`：四种规范文本格式的逐字节指纹。
 
-冻结哪三种格式
+冻结哪四种格式
 --------------
 1. `tally-vocab v1` —— 词表规范文本（`# tally-vocab v1` 头部 + `[specials]` +
    `[tokens]` 两个小节，每行 `id rank base64`）。
@@ -10,6 +10,9 @@
    `[kept]` + `[truncated]` + `[dropped]` 三节）。
 3. `tally-train v1` —— 训练产物配方（`# key value` 头部 + `[merges]` +
    `[specials]`，每行 base64）。
+4. `tally-digest v1` —— 报告摘要侧车（`report <sha256>` + `plan <sha256>` +
+   `[segments]`，每行 `index action sha|-`）。它和报告是两份文件，冻结它是
+   为了让"校验口径"本身也可长期 diff。
 
 怎么保证不漂移
 --------------
@@ -40,11 +43,15 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOCK = ROOT / "FORMAT.lock"
 PLAN_SRC = ROOT / "format_lock_wbtest.mbt"
 TRAIN_SRC = ROOT / "vocab" / "train_lock_wbtest.mbt"
+DIGEST_SRC = ROOT / "budget" / "digest_lock_wbtest.mbt"
 VOCAB_SAMPLE = ROOT / "tests" / "golden" / "sample-vocab.txt"
 PLAN_SAMPLE = ROOT / "tests" / "golden" / "sample-plan.txt"
 PLAN_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-overflow.txt"
 PLAN_TRUNCATED_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-truncated.txt"
 TRAIN_SAMPLE = ROOT / "tests" / "golden" / "sample-train.txt"
+DIGEST_SAMPLE = ROOT / "tests" / "golden" / "sample-digest.txt"
+DIGEST_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-digest-overflow.txt"
+DIGEST_TRUNCATED_SAMPLE = ROOT / "tests" / "golden" / "sample-digest-truncated.txt"
 
 GENERATOR = "tools/gen_format_lock.py"
 
@@ -58,6 +65,7 @@ HEADER = f"""\
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
 #   tally-plan  v2   预算计划报告（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
+#   tally-digest v1  报告摘要侧车，校验口径（budget/digest.mbt）
 #
 # 各字段：格式名 <TAB> 样本文件 <TAB> 字节数 <TAB> sha256
 # 内容断言在 MoonBit 测试里，改实现先红的是测试，不是这张表。
@@ -99,10 +107,14 @@ def extract_mbt_string(source: str, name: str, path: pathlib.Path) -> str:
 def rows() -> list[tuple[str, pathlib.Path, str]]:
     plan_src = PLAN_SRC.read_text(encoding="utf-8")
     train_src = TRAIN_SRC.read_text(encoding="utf-8")
+    digest_src = DIGEST_SRC.read_text(encoding="utf-8")
     mixed = extract_mbt_string(plan_src, "frozen_plan_mixed", PLAN_SRC)
     overflow = extract_mbt_string(plan_src, "frozen_plan_overflow", PLAN_SRC)
     truncated = extract_mbt_string(plan_src, "frozen_plan_truncated", PLAN_SRC)
     trained = extract_mbt_string(train_src, "frozen_train_artifact", TRAIN_SRC)
+    d_mixed = extract_mbt_string(digest_src, "frozen_digest_mixed", DIGEST_SRC)
+    d_overflow = extract_mbt_string(digest_src, "frozen_digest_overflow", DIGEST_SRC)
+    d_truncated = extract_mbt_string(digest_src, "frozen_digest_truncated", DIGEST_SRC)
     if not VOCAB_SAMPLE.exists():
         raise SystemExit(f"missing {VOCAB_SAMPLE}; run tools/gen_sample_vocab.py first")
     return [
@@ -115,6 +127,9 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
         ("tally-plan v2", PLAN_OVERFLOW_SAMPLE, overflow),
         ("tally-plan v2", PLAN_TRUNCATED_SAMPLE, truncated),
         ("tally-train v1", TRAIN_SAMPLE, trained),
+        ("tally-digest v1", DIGEST_SAMPLE, d_mixed),
+        ("tally-digest v1", DIGEST_OVERFLOW_SAMPLE, d_overflow),
+        ("tally-digest v1", DIGEST_TRUNCATED_SAMPLE, d_truncated),
     ]
 
 

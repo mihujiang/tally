@@ -32,9 +32,17 @@ fn usage() -> Unit {
   println("tally — context budget engine for MoonBit: fit context into a token limit")
   println("")
   println("usage:")
-  println("  tally fit    --vocab <file> --limit <n> [--reserve <n>] [--truncate none|tail|head] [--file <f>]")
+  println(
+    "  tally fit    --vocab <file> --limit <n> [--reserve <n>] [--truncate none|tail|head] [--file <f>]",
+  )
   println("  tally count  --vocab <file> [--text <s> | --file <f>] [--explain]")
   println("  tally encode --vocab <file> [--text <s> | --file <f>]")
+  println(
+    "  tally digest --vocab <file> --limit <n> [--reserve <n>] [--truncate ...] [--file <f>]",
+  )
+  println(
+    "  tally verify --report <f> --digest <f> [--vocab <file> --limit <n> --file <f>]",
+  )
 }
 
 ///|
@@ -57,13 +65,21 @@ fn run(args : Array[String]) -> Unit raise {
   let mut reserve : Int64 = 0L
   let mut truncate_mode = "none"
   let mut explain = false
+  let mut report_path : String? = None
+  let mut digest_path : String? = None
   let mut i = 0
   while i < args.length() {
     let a = args[i]
     let has_next = i + 1 < args.length()
-    if a == "count" || a == "encode" || a == "fit" {
+    if a == "count" || a == "encode" || a == "fit" || a == "digest" || a == "verify" {
       cmd = a
       i = i + 1
+    } else if a == "--report" && has_next {
+      report_path = Some(args[i + 1])
+      i = i + 2
+    } else if a == "--digest" && has_next {
+      digest_path = Some(args[i + 1])
+      i = i + 2
     } else if a == "--vocab" && has_next {
       vocab_path = Some(args[i + 1])
       i = i + 2
@@ -101,6 +117,62 @@ fn run(args : Array[String]) -> Unit raise {
   }
   if cmd == "" {
     usage()
+    return
+  }
+  // verify 的 vocab 是可选的：不带 vocab 时只做"报告与摘要自洽"，
+  // 带上 vocab + 输入时才重跑一遍做"端到端复算"。
+  if cmd == "verify" {
+    let report_file = match report_path {
+      Some(p) => p
+      None => raise Failure::Failure("verify needs --report <f>")
+    }
+    let digest_file = match digest_path {
+      Some(p) => p
+      None => raise Failure::Failure("verify needs --digest <f>")
+    }
+    if !@fs.path_exists(report_file) {
+      raise Failure::Failure("report file not found: " + report_file)
+    }
+    if !@fs.path_exists(digest_file) {
+      raise Failure::Failure("digest file not found: " + digest_file)
+    }
+    let report = @budget.normalize_newlines(@fs.read_file_to_string(report_file))
+    let digest_text = @budget.normalize_newlines(@fs.read_file_to_string(digest_file))
+    match @budget.verify_report(report, digest_text) {
+      Ok(_) => ()
+      Err(msg) => raise Failure::Failure(msg)
+    }
+    // 端到端复算：策略与输入都给齐时，重跑一遍必须逐字节还原报告与摘要。
+    match (vocab_path, file) {
+      (Some(vf), Some(input_file)) => {
+        let vocab = @tally.load(@fs.read_file_to_string(vf))
+        let plan = make_plan(
+          vocab,
+          @fs.read_file_to_bytes(input_file),
+          limit,
+          reserve,
+          truncate_mode,
+        )
+        let rebuilt_report = plan.render()
+        let rebuilt_digest = plan.render_digest()
+        if rebuilt_report != report {
+          raise Failure::Failure(
+            "report does not match a fresh recomputation (first difference at line " +
+            first_diff_line(rebuilt_report, report).to_string() +
+            ")",
+          )
+        }
+        if rebuilt_digest != digest_text {
+          raise Failure::Failure(
+            "digest does not match a fresh recomputation (first difference at line " +
+            first_diff_line(rebuilt_digest, digest_text).to_string() +
+            ")",
+          )
+        }
+      }
+      _ => ()
+    }
+    println("verify ok")
     return
   }
   let vocab_file = match vocab_path {
@@ -141,28 +213,81 @@ fn run(args : Array[String]) -> Unit raise {
       }
       println(parts.join(" "))
     }
-    "fit" => {
-      let limit = if limit <= 0L { 4096L } else { limit }
-      let strategy = match truncate_mode {
-        "tail" => @tally.truncate_tail()
-        "head" => @tally.truncate_head()
-        _ => @tally.truncate_none()
-      }
-      // MVP：把输入整体视为一段 Newest 段，演示装配、截断与丢弃报告。
-      let segments = [
-        @budget.Segment::text(
-          "system",
-          @budget.Pinned,
-          "you are a helpful assistant.",
-        ),
-        @budget.Segment::new("payload", @budget.Newest, input_bytes),
-      ]
-      let cfg = @tally
-        .fit_config(@tally.cl100k(vocab), limit + reserve)
-        .with_reserve(reserve)
-        .with_strategy(strategy)
-      println(@tally.fit_with(cfg, segments).render())
-    }
+    // `render()` 已以 `\n` 结尾；`println` 会再补一个，打印前先去掉，落盘才是规范形。
+    "fit" =>
+      println(chomp(make_plan(vocab, input_bytes, limit, reserve, truncate_mode).render()))
+    "digest" =>
+      println(
+        chomp(make_plan(vocab, input_bytes, limit, reserve, truncate_mode).render_digest()),
+      )
     _ => usage()
   }
+}
+
+///|
+/// CLI 的装配口径只有一处：fit / digest / verify 共用，避免三者各自维护一套参数
+/// 而出现"报告和摘要不是同一份计划"的情况。
+fn make_plan(
+  vocab : @tally.Vocab,
+  input_bytes : Bytes,
+  limit : Int64,
+  reserve : Int64,
+  truncate_mode : String,
+) -> @budget.Plan raise {
+  let limit = if limit <= 0L { 4096L } else { limit }
+  let strategy = match truncate_mode {
+    "tail" => @tally.truncate_tail()
+    "head" => @tally.truncate_head()
+    _ => @tally.truncate_none()
+  }
+  // MVP：把输入整体视为一段 Newest 段，演示装配、截断与丢弃报告。
+  let segments = [
+    @budget.Segment::text("system", @budget.Pinned, "you are a helpful assistant."),
+    @budget.Segment::new("payload", @budget.Newest, input_bytes),
+  ]
+  let cfg = @tally
+    .fit_config(@tally.cl100k(vocab), limit + reserve)
+    .with_reserve(reserve)
+    .with_strategy(strategy)
+  @tally.fit_with(cfg, segments)
+}
+
+///|
+/// 报错时给人一个位置，而不是只说"对不上"。
+fn first_diff_line(a : String, b : String) -> Int {
+  let al = a.split("\n")
+  let bl = b.split("\n").to_array()
+  let mut n = 0
+  let mut i = 0
+  let mut done = false
+  for x in al {
+    if done {
+      break
+    }
+    if i < bl.length() {
+      let y = bl[i]
+      if x != y {
+        done = true
+      } else {
+        n = n + 1
+      }
+    }
+    i = i + 1
+  }
+  n + 1
+}
+
+///|
+/// 去掉结尾的一个换行（含 CRLF）。`render()` 自带结尾换行，而 `println` 还会补一个；
+/// 不处理的话，文件里会多出一个空行，哈希就与内容对不上。
+fn chomp(s : String) -> String {
+  let chars = s.to_array()
+  let mut n = chars.length()
+  if n > 0 && chars[n - 1] == '\n' {
+    n = n - 1
+  }
+  if n > 0 && chars[n - 1] == '\r' {
+    n = n - 1
+  }
+  String::from_array(chars[0:n].to_owned())
 }

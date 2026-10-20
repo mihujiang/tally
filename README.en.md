@@ -9,7 +9,7 @@ Context overflow is an event that happens before *every* agent call, not an edge
 usual fix is "characters ÷ 4" and then a hard cut — which lands in the middle of a JSON
 object or a tool call, and leaves you unable to explain afterwards why one chunk survived.
 
-`tally` does three things, and every one of them is checkable:
+`tally` does four things, and every one of them is checkable:
 
 1. **Exact counting** — byte-level BPE of cl100k shape; 2,935 corpus cases aligned
    token-by-token against `tiktoken 0.14.0`, zero differences.
@@ -17,6 +17,10 @@ object or a tool call, and leaves you unable to explain afterwards why one chunk
    cut; the report says which segment was dropped, how many tokens, and why.
 3. **Reproducible** — vocabularies and reports are canonical text, pinned byte for byte by
    `FORMAT.lock`. Change one byte and the test goes red.
+4. **Verifiable** — a report can ship with a `tally-digest v1` sidecar: one sha256 for the
+   report bytes, one per segment. `verify` first cross-checks the two files, then — given the
+   vocabulary and the input — **re-assembles the plan** and compares both files byte for byte.
+   "The report says this fit" becomes something a third party can check.
 
 ```moonbit
 let segments = [
@@ -171,9 +175,23 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 moon run cmd/main --target js -- count --vocab tests/golden/sample-vocab.txt --text "hello world"
 moon run cmd/main --target js -- count --vocab tests/golden/sample-vocab.txt --text "hello there token" --explain
 moon run cmd/main --target js -- encode --vocab tests/golden/sample-vocab.txt --text "hello world"
+
+# report + digest sidecar: the report is for humans, the digest is for machines
+moon run cmd/main --target js -- digest --vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --text "hello world hello world"
+
+# verify: cross-check the two files, then re-assemble and compare byte for byte
+moon run cmd/main --target js -- verify --report report.txt --digest digest.txt --vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --text "hello world hello world"
 ```
 
 `--file <f>` replaces `--text <s>` and reads raw bytes (no UTF-8 assumption).
+
+A failed verification prints one `error:` line that names the position and both sha256 values:
+
+```text
+error: report sha256 mismatch: digest says 317c0e78…, file is d7dd9d5b…
+```
+
+The exit code is not part of the contract (MoonBit's core has no `exit`); CI asserts on stdout.
 
 ## Examples (runnable, diffable)
 
@@ -196,6 +214,15 @@ moon run cmd/examples --target js -- big-input    # or one at a time
 Examples read the fixture vocabulary `tests/golden/sample-vocab.txt`; swap in the real one
 with `--vocab data/cl100k_base.tiktoken` (`python tools/fetch_vocab.py` downloads it; `data/`
 is not committed).
+
+Four CLI cases are committed the same way:
+
+| Case | What it pins |
+|---|---|
+| `examples-all` | the combined output of all four examples stays diffable |
+| `cli-fit` | the shape of a `fit` report |
+| `cli-verify-ok` | `fit` → `digest` → `verify`: self-consistency, then a full recompute of both files |
+| `cli-verify-mismatch` | two genuine but non-matching samples: verification must fail and print both sha256 values |
 
 ## Vocabulary format
 
@@ -222,13 +249,14 @@ the token table is fully reconstructible. `train -> to_text -> load_train` is a 
 
 ## Format lock (`FORMAT.lock`)
 
-Three external text formats are pinned byte for byte:
+Four external text formats are pinned byte for byte:
 
 | Format | Content | Pinned by |
 |---|---|---|
 | `tally-vocab v1` | vocabulary canonical text (`vocab/export.mbt`) | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
 | `tally-plan v2` | budget plan report (`budget/report.mbt`) | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated}.txt` |
 | `tally-train v1` | training recipe (`vocab/train_format.mbt`) | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
+| `tally-digest v1` | report digest sidecar (`budget/digest.mbt`) | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
 
 `FORMAT.lock` records byte count and sha256 of every sample;
 `python tools/gen_format_lock.py --check` fails on any drift. Changing the renderer turns the
@@ -242,6 +270,40 @@ space-splittable):
 - when `overflow = true`, a **sentinel** line is appended to `[dropped]`:
   `-1 pinned *overflow* <excess> <reason>`. It does not correspond to a segment; skip
   `index == -1` when reconciling (`Plan.excess` carries the same number).
+
+### Report digest format `tally-digest v1`
+
+The report is for humans, the digest is for machines. The digest is a **separate file** rather
+than an embedded section, so the report keeps describing only the plan, while the digest can be
+shipped, replaced, and rejected on its own:
+
+```text
+tally-digest v1
+report <sha256 of the report file>
+plan <sha256 of the [segments] body>
+[segments]
+0 kept <sha256 of the bytes that actually entered the window>
+1 dropped -
+```
+
+Rules (pinned by tests and `FORMAT.lock`):
+
+- rows are sorted by `index`, independent of the report's kept→truncated→dropped sections;
+- a `dropped` segment's sha is always `-`: it never entered the window;
+- the overflow sentinel `-1` is listed and counted in the `plan` hash (an overflow must be
+  auditable) but skipped by both sides during reconciliation;
+- newlines are normalized first (CRLF→LF, trailing blank lines folded), so files written by a
+  Windows console redirect verify the same way.
+
+`verify` has two levels, and only the second is end-to-end:
+
+| Level | Input | What it proves |
+|---|---|---|
+| self-consistency | report + digest | the two files agree: report bytes unchanged, segment count/action/used all match, `input_limit == window - reserve` |
+| end-to-end recompute | plus `--vocab` and the input | re-assemble from the same vocabulary and input; the new report and digest must equal the old files byte for byte |
+
+Only the second level rules out "both files were edited into a consistent lie", which is why CI
+runs both.
 
 ## Non-goals
 
@@ -299,11 +361,14 @@ python tools/gen_format_lock.py --check
 python tools/check_examples.py
 ```
 
-Current size: **7 packages, 87 tests** (6 of them black-box, public API only), green on both
+Current size: **7 packages, 122 tests** (6 of them black-box, public API only), green on both
 `wasm-gc` and `js`; matrix A aligns **2,935 corpus cases** (16,273 tokens, zero differences)
 against the reference implementation; matrix D (reproducible training) is byte-identical
-across 5 parameter sets; **4 examples + 1 CLI case** are committed byte for byte under
-`examples/expected/`. All of it runs in `.github/workflows/ci.yml`.
+across 5 parameter sets; matrix I (garbage input may only succeed or fail with a **named**
+error) and matrix J (change one byte and verification must fail **with a position**) live in
+`vocab/robustness_wbtest.mbt` and `budget/digest_wbtest.mbt`; **4 examples + 4 CLI cases** are
+committed byte for byte under `examples/expected/`. All of it runs in
+`.github/workflows/ci.yml`, including the two `verify` steps.
 
 ## License
 

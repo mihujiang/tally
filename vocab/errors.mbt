@@ -9,7 +9,8 @@ pub suberror VocabError {
   InvalidBase64(Char)
   /// 第 `line` 行无法解析
   MalformedLine(Int, String)
-  /// 同一字节序列出现两次（第一次在第 a 行，第二次在第 b 行）
+  /// 同一字节序列出现两次。`a`、`b` 是位置：解析器检测时给出两次所在的行号，
+  /// 内部构建器兜底检测时给出 token 下标（正常情况下解析器会先命中，带行号）。
   DuplicateToken(Int, Int)
   /// 第 `index` 个 token 为空（不变量 V2）
   EmptyToken(Int)

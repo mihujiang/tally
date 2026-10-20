@@ -72,6 +72,7 @@
 | 0.4.0 | **预算引擎换轴**：`Counter` 解耦词表、窗口/预留模型、`KeepPrefix`/`KeepSuffix` 截断、`tally-plan v2` 进 `FORMAT.lock`；段带 `bytes` | 82 测试双后端全绿（含 3 黑盒：构造器 / 窗口截断 / 外部 Counter 字面量）；矩阵 G 168 组不变量通过；2026-10-19 发布，消费端 `moon run` 复验通过 |
 | 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变；2026-10-19 发布，注册表 checksum 与本地构建包 sha256 一致，消费端 `moon run` 复验通过 |
 | 0.5.0 | **示例与集成**：4 个可运行示例（100k→8k 日志、多轮历史、RAG 片段、外部 Counter）、英文 README、GitHub Actions CI；示例输出逐字节入库 | 87 测试双后端全绿；`tools/check_examples.py` 比对 4 示例 + 1 CLI 用例，输出可 diff；CI 在 GitHub 上 14 步全绿（run `39210330467`，commit `e07f759`）；2026-10-19 发布 0.5.0，注册表 `checksum=1fd77b1a…` 与本地构建包 sha256 一致 |
+| 0.6.0 | **稳健性与可验证**：`tally-digest v1` 侧车（零依赖 SHA-256，FIPS 180-4 自实现）+ `verify` 两级校验（自洽 / 端到端复算）；矩阵 I（600 次随机变异，结果只能是成功或可命名错误）、矩阵 J（改一字节必失败并给位置）；第 5 类格式进 `FORMAT.lock`；CI 加 `verify` 两步 | 122 测试双后端全绿；`check_examples.py` 4 例（含 `verify` 失败演示，输出逐字节入库）；`gen_format_lock --check` 8 份样本差异 0；2026-10-20 完成，待发布 |
 
 ---
 
@@ -190,15 +191,44 @@
   若要「线上包 == 仓库 HEAD」的严格一致，需要 0.5.1；
 - V1.0 的硬条件「被真实项目依赖」仍为 0，不在本版范围内解决。
 
-## V0.6 — 稳健性与报告冻结 `0.6.0`
+## V0.6 — 稳健性与可验证 `0.6.0`（已完成）
 
-- [ ] 矩阵 I：随机字节喂 `encode` / `load` 不 panic（≥ 600 条）
-- [ ] 矩阵 J：词表 / 训练产物 / 报告改一个字节即校验失败并给位置（≥ 20 条）
-- [x] 第 4 类格式（`tally-plan v2`）进 `FORMAT.lock`，生成器 `--check` 硬校验 —— 已在 0.4.0 提前完成
-      （`tests/golden/sample-plan{,-overflow,-truncated}.txt` 三份样本）
-- [ ] 错误信息带位置与上下文（不逐字冻结）
+- [x] 矩阵 I：600 次单字符随机变异喂 `load` / `load_tiktoken`，结果只能是成功或**可命名错误**
+      （`vocab/robustness_wbtest.mbt`；两套夹具各 300 次，两个入口判据一致）
+- [x] 矩阵 J：词表 / `.tiktoken` / 报告 / 摘要改一字节即失败并给**位置**
+      （行号、缺哪个 rank、两个 sha256 各是什么；`budget/digest_wbtest.mbt` 12 条 + vocab 5 条）
+- [x] 第 4 类格式（`tally-plan v2`）进 `FORMAT.lock` —— 已在 0.4.0 提前完成
+- [x] 第 5 类格式（`tally-digest v1`）进 `FORMAT.lock`：
+      `budget/digest_lock_wbtest.mbt` 三份摘要 + `tests/golden/sample-digest{,-overflow,-truncated}.txt`
+- [x] 错误信息带位置与上下文（不逐字冻结）
 
-**完成标准**：双后端 fuzz 0 panic；6 个生成器 `--check` 差异 0。
+**产品面新增（原计划只有"稳健"，这版把它变成了可交付能力）**：
+
+- [x] `tally-digest v1`：报告旁的第二份文件——报告字节 + 逐段字节各一个 sha256。
+      与报告分文件而不是内嵌：报告只描述计划，摘要可单独传、单独被拒
+- [x] `verify` **两级**：① 自洽（两份文件互约束：段数 / 动作 / `used` / `window - reserve`）；
+      ② 端到端（给齐 `--vocab` + 输入则重新装配，逐字节比对两份旧文件）
+- [x] 零第三方依赖的 SHA-256（FIPS 180-4 自实现 + NIST 向量，含百万 `a`）
+- [x] CI 加两步：`verify (self-consistency)`、`verify (end-to-end recompute)`；
+      失败演示进 `tools/check_examples.py`（`cli-verify-mismatch`），期望输出逐字节入库
+- [x] 新格式换行归一（CRLF→LF、尾部空行折叠）：Windows 控制台重定向写出的文件同样可验
+
+**完成标准**：双后端 fuzz 0 panic；6 个生成器 `--check` 差异 0 —— 已满足
+（122 测试双后端全绿、`check_examples.py` 4 例逐字节一致、`gen_format_lock.py --check` 8 份样本差异 0）。
+
+**实现说明（这版抓到的三个真 bug）**：
+
+1. **溢出计划无法验**：报告把 `index == -1` 的哨兵行当成"不是某一段"跳过，
+   摘要却列了它，段数一侧 1 一侧 2 → 永远 `SegmentCountMismatch`。改为两侧按同一规则过滤
+   （哨兵仍进 `plan` 哈希，因为"溢出过"要可核对）；
+2. **`.tiktoken` 的重复 rank 被静默覆盖**：两人抢同一个 rank 时只留后者，词表里出现
+   "ranks 有它、tokens 没有它"的错位。改为解析阶段报 `MalformedLine` 并指出冲突行；
+3. **`DuplicateToken` 报的是 token 下标却写成"行号"**：注释说第 a 行、实际是数组位置，
+   用户拿着去编辑器里定位会差一截。改为两个加载器都在解析阶段记录首次出现的**行号**
+   （`build_vocab` 的同名不变检查保留为兜底）。
+
+**未做**：摘要不签名（没有密钥体系）；`verify` 的退出码仍不是契约（core 无 `exit` API），
+CI 按 stdout 判定。
 
 ## V0.7 — 基准与诚实数字 `0.7.0`
 

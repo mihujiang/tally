@@ -6,11 +6,14 @@
 
 上下文塞不进窗口是 agent 的必然事件，不是边界情况。常见做法是「字符数 ÷ 4」估算、再按长度硬切：切在半个 JSON 或半个工具调用中间，事后也无法解释为什么留下这一段、丢掉那一段。
 
-`tally` 做三件事，每一件都可核对：
+`tally` 做四件事，每一件都可核对：
 
 1. **精确计数**：cl100k 形状的 byte-level BPE，2,935 条语料与 `tiktoken 0.14.0` 逐 token 对齐，差异 0。
 2. **可解释装配**：按 `Priority` 把段落装进窗口，`Pinned` 永不裁，输出「丢了哪段、多少 token、为什么」。
 3. **可复现**：词表与报告都是规范文本，格式被 `FORMAT.lock` 逐字节钉死，改一个字节测试就红。
+4. **可验证**：报告旁可附 `tally-digest v1` 侧车——报告字节、逐段字节各留一个 sha256；
+   `verify` 先查两份文件是否自洽，给齐词表与输入再**重新装配一遍**做逐字节复算。
+   「报告说装了这些」因此可以被别人验，而不是只能相信。
 
 ```moonbit
 let segments = [
@@ -174,19 +177,29 @@ moon run cmd/main --target js -- count --vocab tests/golden/sample-vocab.txt --t
 
 # 编码为 id 序列
 moon run cmd/main --target js -- encode --vocab tests/golden/sample-vocab.txt --text "hello world"
+
+# 报告 + 摘要侧车：报告给人读（tally-plan v2），摘要给机器验（tally-digest v1）
+moon run cmd/main --target js -- digest --vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --text "hello world hello world"
+
+# 校验：先查两份文件是否自洽；给齐 --vocab + 输入则再复算一遍并逐字节比对
+moon run cmd/main --target js -- verify --report report.txt --digest digest.txt --vocab tests/golden/sample-vocab.txt --limit 30 --reserve 4 --truncate tail --text "hello world hello world"
 ```
 
 `--file <f>` 可替代 `--text <s>`（按字节读取，不假设 UTF-8 合法）。
+
+校验失败只输出一行 `error: ...` 并**点名位置**（哪一行、哪个文件、两个 sha256 各是什么），
+例如拿两份真实但不配对的样本：
+
+```text
+error: report sha256 mismatch: digest says 317c0e78…, file is d7dd9d5b…
+```
+
+退出码不是契约（MoonBit 核心库没有 `exit`），CI 按 stdout 判定（见下）。
 
 ## 示例（可运行、可 diff）
 
 四个场景在 `cmd/examples/`，输出是 `tally-plan v2` 规范文本，**逐字节入库**
 （`examples/expected/`），由 `python tools/check_examples.py` 复核——示例不是文档里的伪代码。
-
-```powershell
-moon run cmd/examples --target js -- all          # 全部跑一遍
-moon run cmd/examples --target js -- big-input    # 也可以单跑
-```
 
 | 示例 | 场景 | 关注点 |
 |---|---|---|
@@ -197,6 +210,20 @@ moon run cmd/examples --target js -- big-input    # 也可以单跑
 
 示例默认读夹具词表 `tests/golden/sample-vocab.txt`；换成真实词表只需
 `--vocab data/cl100k_base.tiktoken`（`python tools/fetch_vocab.py` 下载；`data/` 不入库）。
+
+```powershell
+moon run cmd/examples --target js -- all          # 全部跑一遍
+moon run cmd/examples --target js -- big-input    # 也可以单跑
+```
+
+除了 4 个示例，CLI 有 4 条用例同样逐字节入库：
+
+| 用例 | 关注点 |
+|---|---|
+| `examples-all` | 4 个示例合并输出仍可 diff |
+| `cli-fit` | `fit` 的报告形状 |
+| `cli-verify-ok` | `fit` → `digest` → `verify` 全链：先自洽通过，再带词表与输入**复算出同样的两个文件** |
+| `cli-verify-mismatch` | 两份都真实但不配对的样本 → 必须失败，并打印两个 sha256 |
 
 ## 词表格式
 
@@ -241,13 +268,14 @@ token 表可完全重建：
 
 ## 格式冻结（`FORMAT.lock`）
 
-三种对外文本格式都被逐字节钉死：
+四种对外文本格式都被逐字节钉死：
 
 | 格式 | 内容 | 冻结在哪 |
 |---|---|---|
 | `tally-vocab v1` | 词表规范文本（`vocab/export.mbt`） | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
 | `tally-plan v2` | 预算计划报告（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated}.txt` |
 | `tally-train v1` | 训练产物配方（`vocab/train_format.mbt`） | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
+| `tally-digest v1` | 报告摘要侧车（`budget/digest.mbt`） | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
 
 `FORMAT.lock` 记录每个样本的**字节数与 sha256**；`python tools/gen_format_lock.py --check`
 在样本或指纹对不上时失败。改格式实现会先让 MoonBit 测试变红，改样本会先让 `--check` 变红
@@ -258,6 +286,37 @@ token 表可完全重建：
 - `counter` 名字与段 `role` 不得含空格或换行——它们直接进行内；
 - `overflow = true` 时 `[dropped]` 末尾多一行**哨兵**：`-1 pinned *overflow* <excess> <原因>`。
   它不对应任何段，`tokens` 是超出量；按段对账时按 `index == -1` 跳过（`Plan.excess` 是同一数值）。
+
+### 报告摘要格式 `tally-digest v1`
+
+报告给人读，摘要给机器验。摘要是**独立文件**，不嵌进报告——报告格式因此保持"只描述计划"，
+摘要则可以单独传、单独替换、单独被拒绝：
+
+```text
+tally-digest v1
+report <报告文件的 sha256>
+plan <[segments] 正文的 sha256>
+[segments]
+0 kept <该段实际字节的 sha256>
+1 dropped -
+```
+
+规矩（全部由测试与 `FORMAT.lock` 钉死）：
+
+- 段行按 `index` **升序**排列，与报告里 kept→truncated→dropped 的分节无关（对账前两侧各自排序）；
+- `dropped` 段的 sha 固定为 `-`：它没进窗口，没有"进了窗口的字节"可言；
+- 溢出哨兵 `-1` 也列进摘要且参与 `plan` 哈希（"溢出过"要可核对），但段对账时两侧都跳过它；
+- 换行先归一（CRLF→LF，尾部空行折叠），所以 Windows 控制台重定向写出的文件同样可验。
+
+`verify` 分两级，第二级才是"端到端"：
+
+| 级别 | 输入 | 能证明什么 |
+|---|---|---|
+| 自洽 | 报告 + 摘要 | 两份文件互相一致：报告字节未改、段数/动作/用了多少 token 对得上、`input_limit == window - reserve` |
+| 端到端复算 | 再加 `--vocab` + 输入 | 拿同一份词表和输入**重新装配**，新报告与新摘要与旧文件**逐字节相同** |
+
+只有第二级能排除"两份文件一起被改得很自洽"。第一级抓不到的，第二级才抓得到；
+所以 CI 两级都跑。
 
 ## 非目标
 
@@ -299,7 +358,7 @@ python tools/gen_unicode.py            # Unicode 属性表
 python tools/gen_sample_vocab.py       # 测试夹具词表
 python tools/gen_pretoken_golden.py    # 预切分 golden
 python tools/gen_alignment_golden.py   # 逐 token 对齐 golden
-python tools/gen_format_lock.py        # FORMAT.lock 指纹（含 sample-train.txt）
+python tools/gen_format_lock.py        # FORMAT.lock 指纹（含 sample-train / sample-digest）
 
 # 示例输出（改了报告格式或示例，需要 --update 并 review diff）
 python tools/check_examples.py
@@ -314,11 +373,13 @@ python tools/gen_format_lock.py --check
 python tools/check_examples.py
 ```
 
-当前规模：**7 个包、87 项测试**（含 6 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
+当前规模：**7 个包、122 项测试**（含 6 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
 矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
 矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**；
-**4 个示例 + 1 条 CLI 用例**的真实输出逐字节入库（`examples/expected/`）。
-上述检查全部在 `.github/workflows/ci.yml` 里自动跑。
+矩阵 I（垃圾输入只能是成功或**可命名错误**）与矩阵 J（改一字节必须失败且带位置）在
+`vocab/robustness_wbtest.mbt`、`budget/digest_wbtest.mbt`；
+**4 个示例 + 4 条 CLI 用例**的真实输出逐字节入库（`examples/expected/`）。
+上述检查全部在 `.github/workflows/ci.yml` 里自动跑，含 `verify` 的自洽与端到端复算两步。
 
 ## 许可
 
