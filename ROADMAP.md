@@ -232,6 +232,8 @@
 的 sha256 **完全一致**（206,749 字节，逐字节相同）；消费端新工程只 `import weopqrst/tally@0.6.0`
 即完成 `render_digest` + `verify_report`，`moon run` 输出 `verify ok`；把报告里的 `used 3`
 改成 `used 4` 后，`verify_report` 返回 `Err("report sha256 mismatch: digest says 22ad4520…, file is 713fe9e5…")`。
+CI：run `39376985167`（commit `1aed37f`）17 步全绿——含新增的 `verify (self-consistency)`
+与 `verify (end-to-end recompute)`；run `39377540734`（`171d108`）同样全绿。
 
 **未做**：摘要不签名（没有密钥体系）；`verify` 的退出码仍不是契约（core 无 `exit` API），
 CI 按 stdout 判定。
