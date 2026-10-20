@@ -73,6 +73,7 @@
 | 0.4.1 | **0.4.0 检查修复**：`fit_with_result` + `FitError` 可命名、`estimate` 改按字符、`cl100k`/`fit` 上移门面（`budget` 包级不再依赖 `vocab`）、`Plan.excess`、CLI 参数校验、格式约束入文档 | 86 测试双后端全绿（含 5 黑盒）；`budget` import 表只剩 `core`；`FORMAT.lock` 未变；2026-10-19 发布，注册表 checksum 与本地构建包 sha256 一致，消费端 `moon run` 复验通过 |
 | 0.5.0 | **示例与集成**：4 个可运行示例（100k→8k 日志、多轮历史、RAG 片段、外部 Counter）、英文 README、GitHub Actions CI；示例输出逐字节入库 | 87 测试双后端全绿；`tools/check_examples.py` 比对 4 示例 + 1 CLI 用例，输出可 diff；CI 在 GitHub 上 14 步全绿（run `39210330467`，commit `e07f759`）；2026-10-19 发布 0.5.0，注册表 `checksum=1fd77b1a…` 与本地构建包 sha256 一致 |
 | 0.6.0 | **稳健性与可验证**：`tally-digest v1` 侧车（零依赖 SHA-256，FIPS 180-4 自实现）+ `verify` 两级校验（自洽 / 端到端复算）；矩阵 I（600 次随机变异，结果只能是成功或可命名错误）、矩阵 J（改一字节必失败并给位置）；第 5 类格式进 `FORMAT.lock`；CI 加 `verify` 两步 | 122 测试双后端全绿；`check_examples.py` 4 例（含 `verify` 失败演示，输出逐字节入库）；`gen_format_lock --check` 8 份样本差异 0；2026-10-20 发布 0.6.0（commit `1aed37f`），注册表 `checksum=f75643fa…` 与本地构建包 sha256 一致，消费端 `moon add` 后 `render_digest` + `verify_report` 复验通过 |
+| 0.6.1 | **补完欠账**：`tally-seal v1`（零依赖 HMAC-SHA256）+ CLI `seal`；退出码成为契约（0/1）；BOM / CRLF / UTF-16 输入归一 | 148 测试双后端全绿；9 份样本 / 5 类格式差异 0；7 条示例逐字节一致（2 条断非零退出）；2026-10-20 发布（commit `d8bb332`），注册表 `checksum=9386d50b…` 与本地包 sha256 一致，仓库外消费端 20 项验收 + 双后端逐字节一致 |
 
 ---
 
@@ -262,6 +263,32 @@ V0.6 的"未做"只有两条，都是"别人想依赖却依赖不上"的问题�
 
 **完成标准**：`moon test` 双后端 **148 项**全绿；6 个生成器 `--check` 差异 0
 （**9 份样本 / 5 类格式**）；**7 条示例用例**逐字节一致，其中 2 条断言退出码非零 —— 已满足。
+
+**发布**：`moon publish` 2026-10-20 服务端 `200 OK`（commit `d8bb332`，推送 `d36b383..d8bb332`）；
+注册表 `checksum=9386d50b603d6ae6101f98a2d9f2caafbd7194f3239b54da8fcdd41edbe2cc06`
+与本地 `_build/publish/weopqrst-tally-0.6.1.zip` 的 sha256 **完全一致**
+（223,497 字节 / 107 个文件）。CI：run `39381394167`（commit `d8bb332`）**20 步全绿**。
+线上包对应 `d8bb332`；之后只提交文档证据（本段），代码、API、发布字节均未变
+——若要「线上包 == HEAD」的严格一致需再发一版，但差异只在记录本身。
+
+**外部验收（0.6.1 新增的验收方式）**：在仓库外另建一个消费端工程（`../acceptance/`，不入库——
+放进仓库会被打进发布包），只 `moon add weopqrst/tally@0.6.1`，不碰源码、不跑包内测试：
+
+- **20 项断言全过**：计数与编码一致、`encode`/`decode` 往返、窗口与预留、`Pinned` 不被裁、
+  总量守恒、丢弃必须给原因、`truncate_head`/`truncate_tail` 真的截断、reserve 挤爆窗口显式报错、
+  报告头/摘要头、摘要复算、改一字节必失败、印记头/验章/换密钥/换摘要/空密钥、两次装配逐字节一致；
+- `wasm-gc` 与 `js` 两次运行输出**逐字节相同**（449 字节）——确定性不是文档里的形容词；
+- **单 import** 包（只 `import weopqrst/tally`）1 项链路测试双后端通过：
+  装配 → 报告 → 摘要 → 盖章 → 验章；
+- 发布 zip 解压后**独立** `moon check` 通过（23 任务）；CLI 端到端 `verify ok` / `exit 0`，
+  篡改报告与错密钥分别 `exit 1` 且都点名位置
+  （`report sha256 mismatch: digest says 57f245f4…, file is 43343b7b…`；
+  `seal mismatch: seal says ac9dbec8…, recomputed c972b7b2…`）。
+
+**验收发现（已修）**：申报书原写「多池配额、用不完可借用」「检索片段按分数取舍」「占位压缩」，
+三项实现里都没有——已把「核心功能范围」改写为实际能力（四级优先级、整段丢弃或截断、
+分数映射由调用方做），并把「零第三方依赖」限定为「核心包」。这就是外部验收的价值：
+**文档里的形容词一跑就现形**。
 
 ## V0.7 — 基准与诚实数字 `0.7.0`
 
