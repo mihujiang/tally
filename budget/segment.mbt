@@ -44,18 +44,40 @@ pub fn Priority::name(self : Priority) -> String {
 ///|
 /// 上下文里的一段。`role` 是自由标签（如 `system` / `user`），
 /// `bytes` 是该段要送进窗口的内容。
+///
+/// 两个可选维度都只影响**取舍**，不影响编码：
+/// * `pool` —— 配额池名（如 `tools` / `retrieval` / `history`）。同名段共享一份配额，
+///   池用不完的配额可按声明顺序借给超额的池，借用规则会写进报告。
+///   空串表示默认池，不参与配额。
+/// * `score` —— 同优先级内的取舍分数，**越大越优先保留**（检索片段的相关性、
+///   工具定义的重要性都可以放这里）。分数只在同一 `Priority` 内比较，
+///   不会越过优先级。
 pub(all) struct Segment {
   role : String
   priority : Priority
+  pool : String
+  score : Int64
   bytes : Bytes
 }
 
 ///|
 pub fn Segment::new(role : String, priority : Priority, bytes : Bytes) -> Segment {
-  { role, priority, bytes }
+  { role, priority, pool: "", score: 0L, bytes }
 }
 
 ///|
 pub fn Segment::text(role : String, priority : Priority, text : String) -> Segment {
-  { role, priority, bytes: @utf8.encode(text) }
+  { role, priority, pool: "", score: 0L, bytes: @utf8.encode(text) }
+}
+
+///|
+/// 归入某个配额池（`name` 不得含空格或换行：它会直接进报告）。
+pub fn Segment::with_pool(self : Segment, name : String) -> Segment {
+  { ..self, pool: name }
+}
+
+///|
+/// 设置同优先级内的取舍分数（越大越优先保留）。
+pub fn Segment::with_score(self : Segment, score : Int64) -> Segment {
+  { ..self, score }
 }

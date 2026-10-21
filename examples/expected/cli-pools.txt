@@ -1,0 +1,17 @@
+tally-plan v3
+counter cl100k_base exact=true
+window 400
+reserve 0
+input_limit 400
+used 280
+pinned 23
+overflow false
+[pools]
+tools 10 47 47 37 0
+history 300 210 210 0 37
+[kept]
+0 pinned system 23
+1 newest tools 47
+2 oldest history 210
+[truncated]
+[dropped]

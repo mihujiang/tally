@@ -124,6 +124,30 @@ jobs:
           test "$out" = "verify ok"
           echo "recomputed: report $(wc -c < "$tmp/report.txt") bytes, digest $(wc -c < "$tmp/digest.txt") bytes"
 
+      # 1.0 新能力在**发布目标后端**上也要能复算：段 / 池 / 占位压缩三个参数
+      # 必须和 fit / digest / verify 走同一条口径，否则"复算通过"只是子命令各自编故事。
+      - name: verify (pools + compress, end-to-end)
+        run: |
+          set -eu
+          tmp=$(mktemp -d)
+          printf 'you are a coding agent.' > "$tmp/system.txt"
+          printf 'read_file(path) -> returns the file content as text' > "$tmp/tools.txt"
+          printf 'user: how do i publish this module?\n%.0s' 1 2 3 4 5 6 > "$tmp/history.txt"
+          args="--vocab tests/golden/sample-vocab.txt --limit 400 --truncate compress
+            --segment system:pinned:$tmp/system.txt
+            --segment tools:newest:$tmp/tools.txt
+            --segment history:oldest:$tmp/history.txt
+            --pool tools=10 --pool history=300
+            --segment-pool tools=tools --segment-pool history=history"
+          moon run cmd/main --target wasm-gc -- fit $args > "$tmp/report.txt"
+          moon run cmd/main --target wasm-gc -- digest $args > "$tmp/digest.txt"
+          grep -q '^\[pools\]$' "$tmp/report.txt"
+          grep -q '^tools ' "$tmp/report.txt"
+          out=$(moon run cmd/main --target wasm-gc -- verify \
+            --report "$tmp/report.txt" --digest "$tmp/digest.txt" $args)
+          test "$out" = "verify ok"
+          echo "pools + compress: recomputed on wasm-gc, pool ledger present"
+
       # 基准只防退化：与 tests/bench/baseline.json 比，超过 2x 即失败（不设优化目标）。
       - name: bench (wasm-gc, regression guard)
         run: python tools/check_bench.py

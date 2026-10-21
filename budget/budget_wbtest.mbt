@@ -88,7 +88,7 @@ test "report is canonical and stable (V15)" {
   let a = plan.render()
   let b = plan.render()
   assert_eq(a, b)
-  assert_true(a.contains("tally-plan v2"))
+  assert_true(a.contains("tally-plan v3"))
   assert_true(a.contains("counter cl100k_base exact=true"))
   assert_false(plan.overflow)
   assert_eq(plan.dropped.length(), 0)

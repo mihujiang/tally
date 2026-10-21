@@ -11,8 +11,8 @@ let frozen_seal_mixed : String =
   "tally-seal v1\n" +
   "scheme hmac-sha256\n" +
   "key_id ci\n" +
-  "digest 3e8f5ace11c2a7824653fb0e43e4824e970b6fc370d29782922a63061134f155\n" +
-  "seal c9273313d04bfe7c00c037618379d1bb7fea4634de58e543fa6835e7ce13f503\n"
+  "digest ddd016f8ab3f232ac1d3bbb761435b52e5f6300ef9b86b671889bdb41ae0b063\n" +
+  "seal 7b4db99e2d030734f4fa3fe40bf2145613c8942679b56f3b5b8a8121ffd31ad8\n"
 
 ///|
 test "format lock: tally-seal v1 (hmac-sha256, key_id ci)" {
@@ -27,11 +27,11 @@ test "format lock: tally-seal v1 parses back to the same fields" {
   assert_eq(seal.key_id, "ci")
   assert_eq(
     seal.digest_sha,
-    "3e8f5ace11c2a7824653fb0e43e4824e970b6fc370d29782922a63061134f155",
+    "ddd016f8ab3f232ac1d3bbb761435b52e5f6300ef9b86b671889bdb41ae0b063",
   )
   assert_eq(
     seal.seal,
-    "c9273313d04bfe7c00c037618379d1bb7fea4634de58e543fa6835e7ce13f503",
+    "7b4db99e2d030734f4fa3fe40bf2145613c8942679b56f3b5b8a8121ffd31ad8",
   )
   verify_seal_pair(frozen_digest_mixed, frozen_seal_mixed, "ci-key")
 }

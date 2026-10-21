@@ -335,15 +335,53 @@ CI run [39527626238](https://github.com/mihujiang/tally/actions/runs/39527626238
 `wasm-gc` 与 `js` 输出逐字节相同 —— `tokens=259 ids=20 count=20 consistent=true roundtrip=true`、
 `train_vocab=274 deterministic=true`。
 
-## V1.0 — 正式版 `1.0.0`
+## V1.0 — 正式版（以 `0.8.0` 发布）
 
+> **版本号**：mooncakes 现在拒绝主版本不为 0 的 `moon.mod`（`moon package` 报
+> "the major version must be '0'"），所以 1.0 的能力集以 **`0.8.0`** 发布；"1.0" 指语义承诺
+> （API 与五个格式冻结），平台放开主版本后再落 `1.0.0`。
+
+- [x] 门面第一屏是 `fit`，`encode` 降为底层能力
+- [x] API 冻结 + 语义化版本承诺（README「1.0：API 冻结」一节）
+- [x] 质量底线：**160 测试**双后端全绿、对齐 **2,935 条 / 16,273 token**、全码点覆盖、核心第三方依赖 0
+- [x] **申报书的三项能力落地**（0.6.1 外部验收时记下的差距清单，逐条销账）：
+      `tally-plan v3` 进 `FORMAT.lock`，CLI / 示例 / 文档同步
 - [ ] **被 ≥1 个真实 MoonBit 项目依赖**（`weopqrst/agent` 或 `mooncassette`），README 列出
-- [ ] 门面第一屏是 `fit`，`encode` 降为底层能力
-- [ ] API 冻结 + 语义化版本承诺
-- [ ] 质量底线：测试 ≥ 120、对齐 ≥ 2,000、码点全覆盖、核心第三方依赖 0
-- [ ] 发布审计七步走完
+- [x] 发布审计：`moon info` 无漂移、`moon package` 通过（包内 122 项，无稿件夹带）、
+      双后端 check/test、5 个生成器 `--check`、示例与基准复核、`moon publish --dry-run` 服务器 202 通过
+- [ ] `moon publish` 真正上线（等）——`moon publish --dry-run` 已验证包体与凭据，命令随时可执行
 
 **完成标准**：`moon publish` 走完；下游 `moon.mod` 出现本包并可构建。
+（已用 `moon add weopqrst/tally` 拉取线上 `0.7.0` 在临时工程里双后端跑通；
+`0.8.0` 的制品包已通过 `moon package` 与服务器 dry-run 的复算检查，待上线后即可被 `moon add` 到 `0.8.0`。）
+
+### 三项能力的落地口径
+
+| 申报书要求 | 实现 | 证据 |
+|---|---|---|
+| 多池配额 + 池间借用 | `PoolQuota` + `FitConfig::with_pools` + `Segment::with_pool`；装配第二轮逐池核对，按声明顺序借用（`spare = 配额 − 占用 − 已借出`），借不到才池内裁；`Plan.pools` 记 `quota/demand/used/borrowed/lent`，报告新增 `[pools]` 节 | `budget/features_wbtest.mbt`（借用台账、池内自裁、池原因丢弃）；示例 `pools` 两个计划；用例 `cli-pools` / `cli-verify-pools` |
+| 同优先级内按分数取舍 | `Segment::with_score`；受害者三级全序：优先级权重 → 分数 → 下标（`pick_victim`） | 示例 `rag` 把 6 个片段放进**同一优先级**、只靠分数区分；`features_wbtest` 的分数取舍用例 |
+| 占位压缩 | `TruncateStrategy::Compress`（门面 `truncate_compress()`）：保留段首 + 固定标记 `…[tally: N tokens omitted]…`，标记计入预算，最多三轮收敛；`TruncatedSegment.omitted` 与标记里的数字同源 | 测试断言标记文案与预算、`[truncated]` 行的 `omitted=`；示例 `compress`；用例 `cli-compress`；冻结样本 `sample-plan-compressed.txt` |
+
+**语义边界（写进 README，不藏在代码里）**：借用只转移额度，不搬段，借入方的 `used` 不变，
+因此逐池台账恒自洽；池配额只能收紧全局预算，不能放宽。「占位压缩」在零依赖与确定性约束下
+是**确定性标记 + 省略量**，不做语义摘要（要做摘要就得引入模型，那就不是这个包了）。
+
+### 本轮（1.0）改了什么
+
+- **格式**：`tally-plan v3`——`[pools]` 节（在 `overflow` 之后、`[kept]` 之前）+ `[truncated]` 行尾
+  `omitted=`；无池计划就是一个空节。`parse_report` **同时认 v2 与 v3**，旧报告仍可被 `verify` 读取。
+- **兼容**：`Segment` 新增的 `pool` / `score` 都有默认值，0.x 的 `Segment::new(role, priority, bytes)`
+  不改一行、行为不变（无池、分数 0）。
+- **CLI**：`--truncate compress`、`--segment <role>:<priority>:<path>`、`--pool <name>=<limit>`、
+  `--segment-pool <role>=<name>`、`--segment-score <role>=<n>`；`fit` / `digest` / `verify` 同一口径，
+  所以带池的计划也能端到端复算。拼错的 role 直接报错，不静默忽略。
+- **示例**：`pools`（借得到 / 借不到两种配额）、`compress`（标记与省略量对账）；`rag` 改为同优先级
+  按分数取舍。示例输出全部重新入库。
+- **锁文件**：`FORMAT.lock` 由 9 份样本 / 5 类格式变为 **11 份样本 / 5 类格式**（新增
+  `sample-plan-pools.txt`、`sample-plan-compressed.txt`）。
+- **性能**：`fit-100k-8k` 2.49 ms，相对 0.7.0 基线 **1.32x**（多了一轮池核对与逐池台账）；
+  阈值 2x 未破，`count` 持平在 1.16x。这条不藏：1.0 的代价就是这一轮账。
 
 ---
 

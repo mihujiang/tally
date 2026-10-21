@@ -23,6 +23,8 @@ pub using @budget {
   type Counter,
   type FitConfig,
   type TruncateStrategy,
+  type PoolQuota,
+  type PoolUsage,
   type FitError,
   type DigestError,
   type PlanDigest,
@@ -121,6 +123,34 @@ pub fn fit_config(counter : @budget.Counter, window : Int64) -> @budget.FitConfi
 }
 
 ///|
+/// 给配置加池配额：`(池名, 配额)`，按数组顺序处理借用。
+///
+/// 语义：池内段共享这份额度；某池用不完的份额按声明顺序借给超额的池；
+/// 借完仍超额就在该池内部继续按优先级/分数裁剪。台账写在报告的 `[pools]` 节。
+pub fn fit_config_pools(
+  cfg : @budget.FitConfig,
+  pools : Array[(String, Int64)],
+) -> @budget.FitConfig {
+  let quotas : Array[@budget.PoolQuota] = []
+  for p in pools {
+    quotas.push(@budget.PoolQuota::new(p.0, p.1))
+  }
+  cfg.with_pools(quotas)
+}
+
+///|
+/// 把一段归入配额池（段名不得含空格）。
+pub fn with_pool(seg : @budget.Segment, name : String) -> @budget.Segment {
+  seg.with_pool(name)
+}
+
+///|
+/// 设置同优先级内的取舍分数：越大越优先保留。
+pub fn with_score(seg : @budget.Segment, score : Int64) -> @budget.Segment {
+  seg.with_score(score)
+}
+
+///|
 /// 整段丢弃（默认）。
 pub fn truncate_none() -> @budget.TruncateStrategy {
   @budget.NoTruncate
@@ -136,6 +166,15 @@ pub fn truncate_tail() -> @budget.TruncateStrategy {
 /// 保留段尾、截掉段首（历史/日志这类最近内容最重要的段）。
 pub fn truncate_head() -> @budget.TruncateStrategy {
   @budget.KeepSuffix
+}
+
+///|
+/// 保留段首，把被截掉的尾部换成占位标记并标注省略量（长日志/长工具输出用）。
+///
+/// 零依赖下的「占位压缩」就是这一件事：标记文案固定、只带省略量，不做语义摘要；
+/// 标记本身占的 token 计入窗口，报告里 `omitted=` 与标记里的数字一致。
+pub fn truncate_compress() -> @budget.TruncateStrategy {
+  @budget.Compress
 }
 
 ///|

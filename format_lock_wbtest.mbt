@@ -1,4 +1,4 @@
-// 格式冻结（T5）：`tally-plan v2` 的**输出格式**逐字节钉死。
+// 格式冻结（T5）：`tally-plan v3` 的**输出格式**逐字节钉死。
 //
 // 这里冻结的是报告文本的形状：首行版本标识、计数器身份、窗口三行、字段顺序与分隔、
 // 优先级名称、截断模式名、丢弃原因原文、行尾 `\n`。任何一处改动都会让 diff 变红，
@@ -10,7 +10,7 @@
 ///|
 /// 混合场景：Pinned 保底、Oldest 先丢、Middle 次之、Newest 最后才牺牲。
 let frozen_plan_mixed : String =
-  "tally-plan v2\n" +
+  "tally-plan v3\n" +
   "counter cl100k_base exact=true\n" +
   "window 8\n" +
   "reserve 0\n" +
@@ -18,6 +18,7 @@ let frozen_plan_mixed : String =
   "used 8\n" +
   "pinned 3\n" +
   "overflow false\n" +
+  "[pools]\n" +
   "[kept]\n" +
   "0 pinned system 3\n" +
   "3 newest new 5\n" +
@@ -29,7 +30,7 @@ let frozen_plan_mixed : String =
 ///|
 /// 溢出场景：只剩 Pinned 还装不下，必须显式上报而不是悄悄超限。
 let frozen_plan_overflow : String =
-  "tally-plan v2\n" +
+  "tally-plan v3\n" +
   "counter cl100k_base exact=true\n" +
   "window 1\n" +
   "reserve 0\n" +
@@ -37,6 +38,7 @@ let frozen_plan_overflow : String =
   "used 3\n" +
   "pinned 3\n" +
   "overflow true\n" +
+  "[pools]\n" +
   "[kept]\n" +
   "0 pinned system 3\n" +
   "[truncated]\n" +
@@ -46,7 +48,7 @@ let frozen_plan_overflow : String =
 ///|
 /// 截断场景：窗口 8、预留 2，输入预算 6；10 token 的段被截到 3 token（保留段首）。
 let frozen_plan_truncated : String =
-  "tally-plan v2\n" +
+  "tally-plan v3\n" +
   "counter cl100k_base exact=true\n" +
   "window 8\n" +
   "reserve 2\n" +
@@ -54,14 +56,15 @@ let frozen_plan_truncated : String =
   "used 6\n" +
   "pinned 3\n" +
   "overflow false\n" +
+  "[pools]\n" +
   "[kept]\n" +
   "0 pinned system 3\n" +
   "[truncated]\n" +
-  "1 newest payload 10->3 prefix\n" +
+  "1 newest payload 10->3 prefix omitted=7\n" +
   "[dropped]\n"
 
 ///|
-test "format lock: tally-plan v2 mixed keep/drop" {
+test "format lock: tally-plan v3 mixed keep/drop" {
   let v = byte_vocab()
   let segments = [
     Segment::text("system", Pinned, "sys"),
@@ -73,14 +76,14 @@ test "format lock: tally-plan v2 mixed keep/drop" {
 }
 
 ///|
-test "format lock: tally-plan v2 pinned overflow" {
+test "format lock: tally-plan v3 pinned overflow" {
   let v = byte_vocab()
   let segments = [Segment::text("system", Pinned, "sys")]
   assert_eq(fit(v, segments, 1L).render(), frozen_plan_overflow)
 }
 
 ///|
-test "format lock: tally-plan v2 truncation" {
+test "format lock: tally-plan v3 truncation" {
   let v = byte_vocab()
   let segments = [
     Segment::text("system", Pinned, "sys"),
@@ -101,4 +104,68 @@ test "format lock: render is deterministic" {
     Segment::text("old", Oldest, "abc"),
   ]
   assert_eq(fit(v, segments, 8L).render(), fit(v, segments, 8L).render())
+}
+
+///|
+/// 池借用场景：tools 配额 3 / 需求 4，history 配额 5 / 只用 2 ⇒ tools 借 1。
+let frozen_plan_pools : String =
+  "tally-plan v3\n" +
+  "counter cl100k_base exact=true\n" +
+  "window 8\n" +
+  "reserve 0\n" +
+  "input_limit 8\n" +
+  "used 6\n" +
+  "pinned 0\n" +
+  "overflow false\n" +
+  "[pools]\n" +
+  "tools 3 4 4 1 0\n" +
+  "history 5 2 2 0 1\n" +
+  "[kept]\n" +
+  "0 newest tools 4\n" +
+  "1 oldest history 2\n" +
+  "[truncated]\n" +
+  "[dropped]\n"
+
+///|
+test "format lock: tally-plan v3 pool borrowing" {
+  let v = byte_vocab()
+  let segments = [
+    Segment::text("tools", Newest, "abcd").with_pool("tools"),
+    Segment::text("history", Oldest, "ef").with_pool("history"),
+  ]
+  let cfg = fit_config_pools(fit_config(cl100k(v), 8L), [
+    ("tools", 3L),
+    ("history", 5L),
+  ])
+  assert_eq(fit_with(cfg, segments).render(), frozen_plan_pools)
+}
+
+///|
+/// 占位压缩场景：80 字节的段压到 57 token，前 23 字节保留，其余换成标记。
+let frozen_plan_compressed : String =
+  "tally-plan v3\n" +
+  "counter cl100k_base exact=true\n" +
+  "window 60\n" +
+  "reserve 0\n" +
+  "input_limit 60\n" +
+  "used 60\n" +
+  "pinned 3\n" +
+  "overflow false\n" +
+  "[pools]\n" +
+  "[kept]\n" +
+  "0 pinned system 3\n" +
+  "[truncated]\n" +
+  "1 newest payload 80->57 compress omitted=57\n" +
+  "[dropped]\n"
+
+///|
+test "format lock: tally-plan v3 placeholder compression" {
+  let v = byte_vocab()
+  let payload = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"
+  let segments = [
+    Segment::text("system", Pinned, "sys"),
+    Segment::text("payload", Newest, payload),
+  ]
+  let cfg = fit_config(cl100k(v), 60L).with_strategy(truncate_compress())
+  assert_eq(fit_with(cfg, segments).render(), frozen_plan_compressed)
 }

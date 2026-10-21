@@ -5,9 +5,10 @@
 --------------
 1. `tally-vocab v1` —— 词表规范文本（`# tally-vocab v1` 头部 + `[specials]` +
    `[tokens]` 两个小节，每行 `id rank base64`）。
-2. `tally-plan v2` —— 预算计划报告（`counter` / `window` / `reserve` /
-   `input_limit` / `used` / `pinned` / `overflow` 七行 +
-   `[kept]` + `[truncated]` + `[dropped]` 三节）。
+2. `tally-plan v3` —— 预算计划报告（`counter` / `window` / `reserve` /
+   `input_limit` / `used` / `pinned` / `overflow` 七行 + `[pools]` + `[kept]` +
+   `[truncated]`（行尾带 `omitted=`）+ `[dropped]` 四节）。v3 在 v2 上只加了
+   「池台账」与「省略量」两列：v2 报告仍然可被解析（`parse_report` 两份都认）。
 3. `tally-train v1` —— 训练产物配方（`# key value` 头部 + `[merges]` +
    `[specials]`，每行 base64）。
 4. `tally-digest v1` —— 报告摘要侧车（`report <sha256>` + `plan <sha256>` +
@@ -52,6 +53,8 @@ VOCAB_SAMPLE = ROOT / "tests" / "golden" / "sample-vocab.txt"
 PLAN_SAMPLE = ROOT / "tests" / "golden" / "sample-plan.txt"
 PLAN_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-overflow.txt"
 PLAN_TRUNCATED_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-truncated.txt"
+PLAN_POOLS_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-pools.txt"
+PLAN_COMPRESSED_SAMPLE = ROOT / "tests" / "golden" / "sample-plan-compressed.txt"
 TRAIN_SAMPLE = ROOT / "tests" / "golden" / "sample-train.txt"
 DIGEST_SAMPLE = ROOT / "tests" / "golden" / "sample-digest.txt"
 DIGEST_OVERFLOW_SAMPLE = ROOT / "tests" / "golden" / "sample-digest-overflow.txt"
@@ -68,7 +71,7 @@ HEADER = f"""\
 #
 # 冻结的格式：
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
-#   tally-plan  v2   预算计划报告（budget/report.mbt）
+#   tally-plan  v3   预算计划报告，含 [pools] 池台账与 truncated 的 omitted（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #   tally-digest v1  报告摘要侧车，校验口径（budget/digest.mbt）
 #   tally-seal  v1   摘要的密钥印记，HMAC-SHA256（budget/seal.mbt）
@@ -118,6 +121,8 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
     mixed = extract_mbt_string(plan_src, "frozen_plan_mixed", PLAN_SRC)
     overflow = extract_mbt_string(plan_src, "frozen_plan_overflow", PLAN_SRC)
     truncated = extract_mbt_string(plan_src, "frozen_plan_truncated", PLAN_SRC)
+    pooled = extract_mbt_string(plan_src, "frozen_plan_pools", PLAN_SRC)
+    compressed = extract_mbt_string(plan_src, "frozen_plan_compressed", PLAN_SRC)
     trained = extract_mbt_string(train_src, "frozen_train_artifact", TRAIN_SRC)
     d_mixed = extract_mbt_string(digest_src, "frozen_digest_mixed", DIGEST_SRC)
     d_overflow = extract_mbt_string(digest_src, "frozen_digest_overflow", DIGEST_SRC)
@@ -131,9 +136,11 @@ def rows() -> list[tuple[str, pathlib.Path, str]]:
             VOCAB_SAMPLE,
             VOCAB_SAMPLE.read_text(encoding="utf-8"),
         ),
-        ("tally-plan v2", PLAN_SAMPLE, mixed),
-        ("tally-plan v2", PLAN_OVERFLOW_SAMPLE, overflow),
-        ("tally-plan v2", PLAN_TRUNCATED_SAMPLE, truncated),
+        ("tally-plan v3", PLAN_SAMPLE, mixed),
+        ("tally-plan v3", PLAN_OVERFLOW_SAMPLE, overflow),
+        ("tally-plan v3", PLAN_TRUNCATED_SAMPLE, truncated),
+        ("tally-plan v3", PLAN_POOLS_SAMPLE, pooled),
+        ("tally-plan v3", PLAN_COMPRESSED_SAMPLE, compressed),
         ("tally-train v1", TRAIN_SAMPLE, trained),
         ("tally-digest v1", DIGEST_SAMPLE, d_mixed),
         ("tally-digest v1", DIGEST_OVERFLOW_SAMPLE, d_overflow),

@@ -17,6 +17,10 @@
 5. **可认账**（0.6.1）：摘要还能被一把共享密钥盖成 `tally-seal v1`，`verify --seal --key`
    一次验完「摘要没被换」和「有人认过」。它证明持有密钥的人签过，**不证明谁写的**——
    对称密钥没有身份，这一点写进格式而不是藏进文档。
+6. **预算不够时还有三件细活**（1.0）：**多池配额**（工具定义、多轮历史各有一份额度，
+   不够按声明顺序借用，逐池记 `borrowed` / `lent`）、**同优先级内按分数取舍**
+   （检索分数不再被硬映射成优先级，而是同优先级里的次序）、**占位压缩**
+   （被裁的尾部换成固定标记并写明省了多少 token，模型知道「这里还有内容」）。
 
 ```moonbit
 let segments = [
@@ -47,16 +51,52 @@ match @tally.fit_with_result(cfg, segments) {
 
 分词（`encode` / `decode` / `count`）是这套东西的**底座**：它保证预算层拿到的是精确数，而不是估算。
 
-## 六个问题，一个引擎
+## 七个问题，一个引擎
 
 | # | 问题 | tally 的回答 |
 |---|---|---|
 | 1 | 这段输入到底多少 token？ | `Counter`：精确计数（`cl100k`）或明确标注的估算（`estimate`），报告里写着是谁算的 |
 | 2 | 窗口 128k，能全给输入吗？ | `window = reserve_output + input_limit`；预留放不下时**显式报错**，不悄悄算成负数 |
-| 3 | 装不下的部分，牺牲谁？ | `Priority`：`Oldest` → `Middle` → `Newest`；权重相同时丢更早的历史 |
-| 4 | 整段丢太浪费，能截短吗？ | `TruncateStrategy`：`KeepPrefix` / `KeepSuffix`，按 `Counter` 二分出刚好够用的字节，切点回退到 UTF-8 边界 |
+| 3 | 装不下的部分，牺牲谁？ | `Priority`：`Oldest` → `Middle` → `Newest`；权重相同时比 `score`（大者留），再相同时丢下标更小的 |
+| 4 | 整段丢太浪费，能截短吗？ | `TruncateStrategy`：`KeepPrefix` / `KeepSuffix` / `Compress`，按 `Counter` 二分出刚好够用的字节，切点回退到 UTF-8 边界 |
 | 5 | 哪些绝对不能动？ | `Pinned`（system 提示、工具定义）优先保全；仍装不下时显式 `overflow` 并给可操作建议 |
-| 6 | 为什么是这个结果？能复现吗？ | `Plan::render()`：`tally-plan v2` 规范文本，每段一行写明动作与量，进 `FORMAT.lock` 指纹 |
+| 6 | 工具定义和历史各有一份额度吗？ | `PoolQuota`：逐池配额 + 池间借用（按声明顺序），报告里逐池记配额/需求/占用/借入/借出 |
+| 7 | 为什么是这个结果？能复现吗？ | `Plan::render()`：`tally-plan v3` 规范文本，每段一行写明动作与量，进 `FORMAT.lock` 指纹 |
+
+## 1.0：预算不够时的三种细活
+
+### 多池配额与借用
+
+`PoolQuota` 给每类内容一份独立额度（工具定义、多轮历史、检索片段各有各的），
+`Segment::with_pool(name)` 把段归入池。装配是**两轮**：
+
+1. 第一轮照旧按全局预算装，`Pinned` 先占；
+2. 第二轮逐池核对：某池超配额时，先按**声明顺序**向还有余额的池借
+   （`spare = 配额 − 占用 − 已借出`），借完仍超就在池内继续裁/丢。
+
+借用只抬高借用方**可用额度**，不改变任何段的占用：报告里 `borrowed` 与对方的 `lent`
+是同一次转移的两侧，`used` 不变——账目因此自洽（一个池的 `borrowed` 总和等于别的池的
+`lent` 总和）。借不到才裁，裁剪仍先按优先级、再按分数、最后按下标。
+
+### 同优先级内按分数取舍
+
+`Segment::with_score(s)` 给段一个分数。受害者选择是三级全序：
+**优先级权重最小 → 分数最小 → 下标最小**，对同一优先级内的段也成立。
+于是「检索分数 92 的片段该留、分数 41 的该走」不用把分数硬映射成优先级——
+映射会抹掉分数之间的次序，只剩三档。
+
+### 占位压缩
+
+`TruncateStrategy::Compress`（门面 `truncate_compress()`）保留段首，把被裁掉的尾部换成
+**确定性标记**：
+
+```text
+…[tally: 1491 tokens omitted]…
+```
+
+标记本身也占 token 并计入预算，所以「留下来的内容 + 标记」一定不超目标；最多三轮收敛
+（标记长度影响剩余额度，再算一次计数）。报告里 `omitted=1491` 与正文标记里的数字是同一个数：
+说了省多少，正文里就写着多少。
 
 ## 它是什么
 
@@ -112,6 +152,11 @@ let plan = @tally.fit_with(@tally.fit_config(counter, 8192L), segments)
 moon add weopqrst/tally
 ```
 
+这条路径不是想当然：本版发布前用一个空的临时工程 `moon add weopqrst/tally`（线上 `0.7.0`），
+写了一段只用门面 API 的程序，`js` 与 `wasm-gc` 双后端都跑出了报告；
+发布制品（`weopqrst-tally-0.8.0.zip`）也由 `moon publish --dry-run` 在服务器侧解包后
+`moon check` 通过。所以"能被别人依赖"是验过的，不是声明的。
+
 ```moonbit
 fn demo(vocab_text : String) -> Unit raise {
   // 加载词表（自有规范文本格式，见下）；加载后不可变
@@ -145,6 +190,21 @@ fn demo(vocab_text : String) -> Unit raise {
   for piece in @tally.piece_counts(v, @utf8.encode("hello there token")) {
     println(piece)
   }
+
+  // 6) 1.0：池配额 + 借用 + 占位压缩 + 同优先级按分数取舍
+  let pooled = [
+    @tally.pinned("system", "you are a coding agent."),
+    // 工具定义归 tools 池，分数 9：池内超额时分数低的先走
+    @tally.with_score(@tally.with_pool(@tally.newest("tool", "read_file(path)"), "tools"), 9L),
+    @tally.with_score(@tally.with_pool(@tally.newest("tool", "run_tests(args)"), "tools"), 4L),
+    @tally.with_pool(@tally.oldest("history", "...前 6 轮..."), "history"),
+  ]
+  // tools 只给 20，history 有余额：按声明顺序借用，报告里记 borrowed/lent
+  let cfg2 = @tally.fit_config_pools(
+    @tally.fit_config(@tally.cl100k(v), 1024L).with_strategy(@tally.truncate_compress()),
+    [("tools", 20L), ("history", 512L)],
+  )
+  println(@tally.fit_with(cfg2, pooled).render())
 }
 ```
 
@@ -172,6 +232,15 @@ moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --lim
 
 # 同理，但保留段尾（最近内容）：--truncate head
 
+# 占位压缩：保留段首，被裁的尾部换成固定标记（写明省略量），标记本身也计入预算
+moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --limit 60 --truncate compress --text "hello world hello world"
+
+# 多段 + 多池：--segment <role>:<priority>:<path>、--pool <name>=<limit>、
+# --segment-pool <role>=<name>（把该 role 的所有段归入池）、--segment-score <role>=<n>
+moon run cmd/main --target js -- fit --vocab tests/golden/sample-vocab.txt --limit 400 `
+  --segment system:pinned:system.txt --segment tools:newest:tools.txt --segment history:oldest:history.txt `
+  --pool tools=10 --pool history=300 --segment-pool tools=tools --segment-pool history=history
+
 # 计数
 moon run cmd/main --target js -- count --vocab tests/golden/sample-vocab.txt --text "hello world"
 
@@ -195,6 +264,11 @@ moon run cmd/main --target js -- verify --report report.txt --digest digest.txt 
 ```
 
 `--file <f>` 可替代 `--text <s>`（按字节读取，不假设 UTF-8 合法）。
+`--segment` / `--pool` / `--segment-pool` / `--segment-score` 都是可重复参数，
+`fit` / `digest` / `verify` 三处接受同一组口径——所以带池的计划也能端到端复算。
+给了 `--segment` 就不再自动造默认的 `system` + `payload` 两段；role 与池名不得含空白
+（它们直接进报告）。三种"静默不生效"都被拦成错误：拼错的 role、拼错的优先级名、
+以及 `--segment-pool` 指向一个**没有 `--pool` 声明**的池名。
 
 校验失败只输出一行 `error: ...` 并**点名位置**（哪一行、哪个文件、两个 sha256 各是什么），
 例如拿两份真实但不配对的样本：
@@ -209,15 +283,17 @@ CI，不必再 grep 输出。0.6.0 及以前只打印 `error: ...` 却仍然 `ex
 
 ## 示例（可运行、可 diff）
 
-四个场景在 `cmd/examples/`，输出是 `tally-plan v2` 规范文本，**逐字节入库**
+六个场景在 `cmd/examples/`，输出是 `tally-plan v3` 规范文本，**逐字节入库**
 （`examples/expected/`），由 `python tools/check_examples.py` 复核——示例不是文档里的伪代码。
 
 | 示例 | 场景 | 关注点 |
 |---|---|---|
 | `big-input` | 十万 token 级日志 → 8192 窗口（留 1024 给回复） | 日志段被**保留段尾**截到 7085 token，`used` 正好 7168 |
 | `multi-turn` | 12 轮历史 + `Pinned` system 提示，360 窗口 / 40 预留 | 最早 4 轮先丢、中间 5 轮后丢，最近 3 轮与 system 全保留 |
-| `rag` | 6 个检索片段 + 问题，按分数映射 `Priority` | 低分片段整段丢（默认策略），高分片段与问题保留 |
+| `rag` | 6 个检索片段**同一优先级**、只靠 `score` 区分 | 分数最低的 4 个片段先走，前两个与问题保留——分数不再被压成优先级 |
 | `foreign-counter` | 外部 tokenizer（按空白切词）包成 `Counter` | 不引入任何依赖，照样计数并把 31 词的段截到 11 词 |
+| `pools` | 同一组段、两次池配额：A 有余额可借，B 两池都紧 | A：`tools` 借 50、`history` 借出 50，两池都不裁；B：`tools` 池内按分数裁掉低分工具，`history` 截到配额 |
+| `compress` | 1520 token 构建日志 → 60 token 负载 | 段首 + 占位标记，`omitted=1491`；标记里的数字与报告里的 `omitted=` 一致 |
 
 示例默认读夹具词表 `tests/golden/sample-vocab.txt`；换成真实词表只需
 `--vocab data/cl100k_base.tiktoken`（`python tools/fetch_vocab.py` 下载；`data/` 不入库）。
@@ -227,14 +303,19 @@ moon run cmd/examples --target js -- all          # 全部跑一遍
 moon run cmd/examples --target js -- big-input    # 也可以单跑
 ```
 
-除了 4 个示例，CLI 有 4 条用例同样逐字节入库：
+除了 6 个示例，还有 9 条 CLI 用例同样逐字节入库：
 
 | 用例 | 关注点 |
 |---|---|
-| `examples-all` | 4 个示例合并输出仍可 diff |
+| `examples-all` | 6 个示例合并输出仍可 diff |
 | `cli-fit` | `fit` 的报告形状 |
 | `cli-verify-ok` | `fit` → `digest` → `verify` 全链：先自洽通过，再带词表与输入**复算出同样的两个文件** |
+| `cli-compress` | `--truncate compress`：截断行带 `omitted=`，报告仍可被解析 |
+| `cli-pools` | `--segment` + `--pool` + `--segment-pool`：`[pools]` 节逐池记借用 |
+| `cli-verify-pools` | **带池的计划**也能端到端复算：新参数在 fit / digest / verify 三处同一口径 |
 | `cli-verify-mismatch` | 两份都真实但不配对的样本 → 必须失败，并打印两个 sha256 |
+| `cli-seal` / `cli-verify-seal` | 摘要被密钥认过：自洽 + 印记一次走完 |
+| `cli-verify-seal-mismatch` | 换一把密钥 → 必须失败并指出 `seal` 对不上 |
 
 ## 词表格式
 
@@ -284,7 +365,7 @@ token 表可完全重建：
 | 格式 | 内容 | 冻结在哪 |
 |---|---|---|
 | `tally-vocab v1` | 词表规范文本（`vocab/export.mbt`） | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
-| `tally-plan v2` | 预算计划报告（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated}.txt` |
+| `tally-plan v3` | 预算计划报告，含 `[pools]` 池台账与 `omitted=`（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated,-pools,-compressed}.txt` |
 | `tally-train v1` | 训练产物配方（`vocab/train_format.mbt`） | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
 | `tally-digest v1` | 报告摘要侧车（`budget/digest.mbt`） | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
 | `tally-seal v1` | 摘要的密钥印记（`budget/seal.mbt`） | `budget/seal_lock_wbtest.mbt` + `tests/golden/sample-seal.txt` |
@@ -293,11 +374,18 @@ token 表可完全重建：
 在样本或指纹对不上时失败。改格式实现会先让 MoonBit 测试变红，改样本会先让 `--check` 变红
 ——两条路都不允许「悄悄漂移」。
 
-`tally-plan v2` 有两条**格式约束**（不引入转义，保证行结构可被空格切分）：
+`tally-plan v3` 有三条**格式约束**（不引入转义，保证行结构可被空格切分）：
 
-- `counter` 名字与段 `role` 不得含空格或换行——它们直接进行内；
+- `counter` 名字、段 `role`、池名、丢弃原因都不得含空格或换行——它们直接进行内
+  （CLI 的 `--segment` / `--pool` / `--segment-pool` 会先校验，不合规直接报错）；
 - `overflow = true` 时 `[dropped]` 末尾多一行**哨兵**：`-1 pinned *overflow* <excess> <原因>`。
-  它不对应任何段，`tokens` 是超出量；按段对账时按 `index == -1` 跳过（`Plan.excess` 是同一数值）。
+  它不对应任何段，`tokens` 是超出量；按段对账时按 `index == -1` 跳过（`Plan.excess` 是同一数值）；
+- `[truncated]` 行尾恒有 `omitted=<n>`（`n` 是被丢掉的原 token 数），`[pools]` 行的六个字段
+  `<池名> <配额> <需求> <占用> <借入> <借出>` 后五个恒为整数。
+
+`[pools]` 只在 1.0 的 v3 里出现；空池列表就是一个空节（`[pools]` 紧跟 `[kept]`），
+所以 v2 里没有池的计划升上来只多一行标题。`parse_report` 同时认 v2 与 v3——
+旧报告仍可被 `verify` 读取，新报告不会把旧的摘要变成废纸。
 
 ### 报告摘要格式 `tally-digest v1`
 
@@ -356,6 +444,28 @@ seal <HMAC-SHA256 hex>
 印记则是另一维度：它不检查内容对不对，只检查"有没有人认过这份内容"。
 三层 CI 都跑。
 
+## 1.0：API 冻结
+
+从这一版起，下面这些签名与格式**不再做不兼容改动**；要加东西只能加新函数、新字段的
+`with_*` 构造器，或升格式版本号：
+
+> **版本号说明**：mooncakes 现阶段只接受 `0.x.y`（`moon package` 会直接拒绝主版本不为 0 的
+> `moon.mod`），所以这次以 **`0.8.0`** 发布。"1.0" 指的是这里的**语义承诺**（API 与五个格式
+> 冻结），不是版本号字面；等平台放开主版本再落 `1.0.0`。
+
+| 面 | 冻结内容 |
+|---|---|
+| 计数 | `Counter`（`name` / `exact` / `count_bytes`）、`cl100k`、`estimate` |
+| 词表 | `load` / `to_text` / `encode` / `decode` / `count` / `piece_counts` / `train` / `load_train` |
+| 装配 | `fit` / `fit_with` / `fit_with_result`、`FitConfig`（含 `with_reserve` / `with_strategy` / `with_pools`）、`Segment`（含 `with_pool` / `with_score`）、`Priority`、`TruncateStrategy`（`none` / `tail` / `head` / `compress`）、`PoolQuota` |
+| 报告 | `Plan`（`kept` / `truncated` / `dropped` / `pools` / `excess`）、`PoolUsage`、`render` |
+| 格式 | `tally-vocab v1`、`tally-plan v3`、`tally-train v1`、`tally-digest v1`、`tally-seal v1`，全部进 `FORMAT.lock` |
+| CLI | `fit` / `count` / `encode` / `digest` / `verify` / `seal` 六个子命令与退出码契约（成功 0、失败 1） |
+
+向后兼容的承诺只有两条，但都实测过：`parse_report` 同时读 `v2` 与 `v3`；
+新增的 `pool` / `score` 字段有默认值，所以 0.x 那种只写 `Segment::new(role, priority, bytes)`
+的代码不改一行也能编译、且行为不变（无池、分数 0）。
+
 ## 非目标
 
 - 不做通用分词器：不提供 `o200k` 等第二编码，不做 BPE 之外的算法（WordPiece / Unigram）。
@@ -374,6 +484,8 @@ seal <HMAC-SHA256 hex>
 | Unicode 版本 | 属性表基于 **17.0.0**（`unicode_version()` 可查）。表由 `tools/gen_unicode.py` 从 `regex` 模块的属性表导出，**与参考实现同一引擎**，因此不是"近似"，而是逐码点一致 |
 | `o200k` 类编码 | 不提供。需要额外的 Unicode 类别与属性表，且不构成差异化 |
 | 截断粒度 | 要么整段丢，要么截到「不超预算」为止；切点由 `Counter` 二分得到，**BPE 计数对长度不严格单调**（追加字节可能触发合并），因此不保证是理论最长的可容纳切片，但保证不超预算且可复现 |
+| 占位压缩的粒度 | 只保留**段首**并接固定标记，不做「首尾各留一段」或按语义摘要；标记文案是格式的一部分（要改就得升 v4） |
+| 池借用 | 只借额度，不搬段：借入方的段仍归原池记 `used`；借不到的池按优先级/分数/下标自行裁，且池配额**只能收紧不能放宽**全局预算 |
 | 截断与字符边界 | 切点会回退到 UTF-8 字符边界，避免半个字符；若边界回退后一个 token 都不剩，则退化为整段丢 |
 | 窗口模型 | `window = reserve_output + input_limit`；`reserve >= window` 时显式报错（`fit_with_result` 给出 `Err((reserve, window))`），不支持「预留随内容变化」的自适应策略 |
 | 估算计数器 | `estimate(n)` 按**字符**（Unicode 码点）向上取整，不按字节——中文一字 3 字节，按字节会放大 3 倍；它仍只是估算，报告里恒标 `exact=false` |
@@ -401,8 +513,8 @@ python tools/check_bench.py                        # 与基线比，退化超 2�
 1–3 字节的短片走不建数组的快路径；词表构建期就备好 ≤ 7 字节 token 的 `Int64` 短键表，
 合并时不再为每个候选拼一个 `Bytes` 出来。
 
-两轮下来 `count` 3.9×、端到端 3.7×，**输出逐字节不变**——corpus 2,935 例、152 项测试双后端、
-7 条示例全部一致；优化只改"怎么算"，不改"算出什么"。第二轮的三条快路径另有独立守门：
+两轮下来 `count` 3.9×、端到端 3.7×，**输出逐字节不变**——corpus 2,935 例、160 项测试双后端、
+10 条示例全部一致；优化只改"怎么算"，不改"算出什么"。第二轮的三条快路径另有独立守门：
 与 0.6.1 原算法做 300 轮随机词表对比、ASCII 分类与生成表逐点核对、全部 1.1M 码点的三类互斥扫描。
 
 机器与时间记在 `tests/bench/baseline.json`（Windows 10 / Intel64 / Python 3.11）。CI 跑同一组基准，
@@ -442,13 +554,13 @@ python tools/gen_format_lock.py --check
 python tools/check_examples.py
 ```
 
-当前规模：**8 个包、152 项测试**（含 8 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
+当前规模：**8 个包、160 项测试**（含 8 项黑盒，只用公开 API），`wasm-gc` 与 `js` 双后端全绿；
 矩阵 A 与参考实现逐 token 对齐 **2,935 条语料**（16,273 个 token，差异 0）；
 矩阵 D（可复现训练）5 组参数下同输入两次训练**逐字节一致**；
 矩阵 I（垃圾输入只能是成功或**可命名错误**）与矩阵 J（改一字节必须失败且带位置）在
 `vocab/robustness_wbtest.mbt`、`budget/digest_wbtest.mbt`；HMAC 用 RFC 4231 的 6 组向量
 （`budget/hmac_wbtest.mbt`），印记的参考值由 Python `hmac` 独立算出后交叉验证；
-**7 条示例用例**的真实输出逐字节入库（`examples/expected/`），其中 2 条专测"必须失败"，
+**10 条示例用例**的真实输出逐字节入库（`examples/expected/`），其中 2 条专测"必须失败"，
 并顺带断言退出码非零；**2 项基准**（`cmd/perf`）有入库基线，CI 只断「不退化超 2 倍」。
 上述检查全部在 `.github/workflows/ci.yml` 里自动跑：`verify` 的自洽、印记、端到端复算，
 外加"篡改后必须 exit 非零"的回归步骤与基准守卫。

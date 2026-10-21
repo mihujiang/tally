@@ -1,7 +1,7 @@
 // `tally-digest v1`：把「报告说了什么」和「报告对应的内容是什么」绑在一起。
 //
 // 分工（这是本层存在的理由，别把两者混成一层）：
-// * 报告（`tally-plan v2`）给人看：哪段保留/截断/丢弃、多少 token、为什么；
+// * 报告（`tally-plan v3`）给人看：哪段保留/截断/丢弃、多少 token、为什么；
 // * 摘要（`tally-digest v1`）给机器看：报告正文的 sha256 + 每段内容的 sha256。
 //
 // 于是「报告有没有被改过」「这段内容是不是报告里那一段」都能用两个文件回答，
@@ -269,7 +269,7 @@ priv struct ReportFacts {
 }
 
 ///|
-/// 解析 `tally-plan v2`。只取 verify 需要的字段；未知行一律报错，
+/// 解析 `tally-plan v2` / `v3`。只取 verify 需要的字段；未知行一律报错，
 /// 免得"报告格式漂移了但校验还说 ok"。
 fn parse_report(report : String) -> ReportFacts raise DigestError {
   let mut line_no = 0
@@ -278,6 +278,8 @@ fn parse_report(report : String) -> ReportFacts raise DigestError {
   let mut limit : Int64 = 0L
   let mut used : Int64 = 0L
   let mut section = ""
+  // v2 与 v3 都读得懂：v3 多 `[pools]` 一节，`[truncated]` 行尾多 `omitted=`。
+  let mut version = 2
   let segments : Array[ReportedSegment] = []
   for raw in report.split("\n") {
     line_no = line_no + 1
@@ -286,7 +288,11 @@ fn parse_report(report : String) -> ReportFacts raise DigestError {
       continue
     }
     if line_no == 1 {
-      if line != "tally-plan v2" {
+      if line == "tally-plan v3" {
+        version = 3
+      } else if line == "tally-plan v2" {
+        version = 2
+      } else {
         raise BadHeader(line.to_owned())
       }
       continue
@@ -295,7 +301,7 @@ fn parse_report(report : String) -> ReportFacts raise DigestError {
     if parts.length() == 0 {
       continue
     }
-    if parts[0] == "[kept]" || parts[0] == "[truncated]" || parts[0] == "[dropped]" {
+    if parts[0] == "[kept]" || parts[0] == "[truncated]" || parts[0] == "[dropped]" || parts[0] == "[pools]" {
       section = parts[0]
       continue
     }
@@ -340,6 +346,18 @@ fn parse_report(report : String) -> ReportFacts raise DigestError {
       }
       continue
     }
+    if section == "[pools]" {
+      // `<池名> <配额> <需求> <占用> <借入> <借出>`：池名之外全是整数。
+      if version != 3 || parts.length() != 6 {
+        raise MalformedLine(line_no, line.to_owned())
+      }
+      for p = 1; p < 6; p = p + 1 {
+        if parse_int_str(parts[p]) == None {
+          raise MalformedLine(line_no, line.to_owned())
+        }
+      }
+      continue
+    }
     if section == "[kept]" {
       if parts.length() != 4 {
         raise MalformedLine(line_no, line.to_owned())
@@ -354,7 +372,11 @@ fn parse_report(report : String) -> ReportFacts raise DigestError {
       }
       segments.push({ index, action: "kept", tokens })
     } else if section == "[truncated]" {
-      if parts.length() != 5 {
+      let want = if version == 3 { 6 } else { 5 }
+      if parts.length() != want {
+        raise MalformedLine(line_no, line.to_owned())
+      }
+      if version == 3 && !parts[5].has_prefix("omitted=") {
         raise MalformedLine(line_no, line.to_owned())
       }
       let index = match parse_int_str(parts[0]) {

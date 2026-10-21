@@ -1,5 +1,6 @@
 // 示例包：和 cmd/main 一样是工具层，因此允许 IO（核心包仍然零 IO）。
 import {
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/x/fs",
   "weopqrst/tally",

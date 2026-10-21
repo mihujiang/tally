@@ -1,4 +1,4 @@
-tally-plan v2
+tally-plan v3
 counter cl100k_base exact=true
 window 8
 reserve 2
@@ -6,8 +6,9 @@ input_limit 6
 used 6
 pinned 3
 overflow false
+[pools]
 [kept]
 0 pinned system 3
 [truncated]
-1 newest payload 10->3 prefix
+1 newest payload 10->3 prefix omitted=7
 [dropped]

@@ -107,10 +107,12 @@ fn demo_multi_turn(v : @tally.Vocab) -> Unit raise {
 }
 
 ///|
-/// 示例 03：RAG 片段拼装。
+/// 示例 03：RAG 片段拼装，**同优先级内按分数取舍**。
 ///
-/// 检索分数直接映射成 `Priority`：高分片段最后牺牲，低分片段最先丢。
-/// 这里用默认策略（整段丢）——检索片段切一半通常比丢掉更糟。
+/// 六个片段都是 `middle`（同一个优先级），唯一的差别是检索分数；
+/// 预算不够时先丢分数最低的那个——这正是 1.0 的 `score` 维度要做的事，
+/// 而不是把分数硬映射成优先级（那会丢掉分数之间的次序）。
+/// 这里仍用默认策略（整段丢）：检索片段切一半通常比丢掉更糟。
 fn demo_rag(v : @tally.Vocab) -> Unit raise {
   let chunks : Array[(String, Int)] = [
     ("Deploys are triggered by pushing a git tag that matches v*.*.*.", 95),
@@ -125,19 +127,13 @@ fn demo_rag(v : @tally.Vocab) -> Unit raise {
   ]
   for entry in chunks {
     let (text, score) = entry
-    let segment = if score >= 85 {
-      @tally.newest("chunk", text)
-    } else if score >= 60 {
-      @tally.middle("chunk", text)
-    } else {
-      @tally.oldest("chunk", text)
-    }
-    segments.push(segment)
+    // 全部落在同一优先级，分数才是唯一的分辨力。
+    segments.push(@tally.with_score(@tally.middle("chunk", text), score.to_int64()))
   }
   segments.push(@tally.newest("question", "when does the publish job run?"))
   let cfg = @tally.fit_config(@tally.cl100k(v), 260L).with_reserve(20L)
   let plan = @tally.fit_with(cfg, segments)
-  println("== 03 rag: 6 chunks + question, 260 window / 20 reserved")
+  println("== 03 rag: 6 chunks (same priority, scored) + question, 260 window / 20 reserved")
   println(
     "chunks " +
     chunks.length().to_string() +
@@ -197,10 +193,105 @@ fn demo_foreign_counter() -> Unit raise {
 }
 
 ///|
+fn ends_with_bytes(hay : Bytes, needle : Bytes) -> Bool {
+  if needle.length() > hay.length() {
+    return false
+  }
+  let off = hay.length() - needle.length()
+  for i = 0; i < needle.length(); i = i + 1 {
+    if hay.unsafe_get(off + i).to_int() != needle.unsafe_get(i).to_int() {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// 示例 05：多池配额与借用。
+///
+/// 同一份段集合、两次不同的池配额：
+/// * 计划 A：`history` 有余额 ⇒ `tools` 按声明顺序借走缺的那部分，两池都不裁，
+///   报告里 `borrowed` / `lent` 逐池对得上；
+/// * 计划 B：两池都紧 ⇒ 没有余额可借，只在 `tools` 池内部按分数裁，
+///   分数低的工具定义先走，丢弃原因点名池与配额。
+fn demo_pools(v : @tally.Vocab) -> Unit raise {
+  let system = "you are a coding agent. answer with commands."
+  let tool_a = "read_file(path) -> returns the file content as text"
+  let tool_b = "run_tests(args) -> runs the test suite and returns the log"
+  let history = repeat_unit("user: how do i publish this module?\n", 6)
+  let segments = [
+    @tally.pinned("system", system),
+    @tally.with_score(@tally.with_pool(@tally.newest("tool", tool_a), "tools"), 9L),
+    @tally.with_score(@tally.with_pool(@tally.newest("tool", tool_b), "tools"), 4L),
+    @tally.with_pool(@tally.oldest("history", history), "history"),
+  ]
+  let tools = @tally.count(v, tool_a) + @tally.count(v, tool_b)
+  let hist = @tally.count(v, history)
+  let window = @tally.count(v, system) + tools + hist + 8L
+  println("== 05 pools: tools demand " + tools.to_string() + " / history demand " + hist.to_string())
+  // 计划 A：tools 只给一半，history 有余额。
+  let cfg_a = @tally.fit_config_pools(
+    @tally.fit_config(@tally.cl100k(v), window),
+    [("tools", tools / 2L), ("history", hist + 64L)],
+  )
+  println(
+    "A quota tools=" + (tools / 2L).to_string() + " history=" + (hist + 64L).to_string(),
+  )
+  println(@tally.fit_with(cfg_a, segments).render())
+  // 计划 B：两池都紧，借不到就池内裁；策略改成保留段尾，
+  // 于是 history 被截到配额而不是整段消失，tools 池内先丢分数低的那个。
+  let cfg_b = @tally.fit_config_pools(
+    @tally.fit_config(@tally.cl100k(v), window).with_strategy(@tally.truncate_head()),
+    [("tools", tools / 2L), ("history", hist / 2L)],
+  )
+  println(
+    "B quota tools=" + (tools / 2L).to_string() + " history=" + (hist / 2L).to_string(),
+  )
+  println(@tally.fit_with(cfg_b, segments).render())
+}
+
+///|
+/// 示例 06：占位压缩。
+///
+/// 长构建日志保留段首，被省略的尾部换成**确定性占位标记**并写明省略量：
+/// 模型看到的是「这里还有 N 个 token」，而不是整段消失。标记本身的 token
+/// 也计入预算，报告里的 `omitted=` 与正文里的数字是同一个数。
+fn demo_compress(v : @tally.Vocab) -> Unit raise {
+  let system = "you summarize build logs."
+  let log = repeat_unit("step 42: compiling module tally ... ok\n", 40)
+  let pinned = @tally.count(v, system)
+  let payload_budget = 60L
+  let cfg = @tally
+    .fit_config(@tally.cl100k(v), pinned + payload_budget)
+    .with_strategy(@tally.truncate_compress())
+  let plan = @tally.fit_with(cfg, [
+    @tally.pinned("system", system),
+    @tally.newest("build-log", log),
+  ])
+  println("== 06 compress: long tool output -> prefix + placeholder marker")
+  println(
+    "log_tokens " +
+    @tally.count(v, log).to_string() +
+    " payload_budget " +
+    payload_budget.to_string(),
+  )
+  println(plan.render())
+  // 报告说省略了多少，段尾就必须写着多少：两处不一致就是 bug。
+  let mut marker_ok = false
+  for t in plan.truncated {
+    let marker = "\n…[tally: " + t.omitted.to_string() + " tokens omitted]…\n"
+    marker_ok = ends_with_bytes(t.bytes, @utf8.encode(marker))
+  }
+  println("marker_ok " + marker_ok.to_string())
+}
+
+///|
 fn usage() -> Unit {
   println("tally examples:")
   println("  moon run cmd/examples --target js -- all")
-  println("  moon run cmd/examples --target js -- big-input|multi-turn|rag|foreign-counter")
+  println(
+    "  moon run cmd/examples --target js -- big-input|multi-turn|rag|foreign-counter|pools|compress",
+  )
   println("  [--vocab <file>]  默认 tests/golden/sample-vocab.txt")
 }
 
@@ -228,11 +319,15 @@ fn run(args : Array[String]) -> Unit raise {
     "multi-turn" => demo_multi_turn(v)
     "rag" => demo_rag(v)
     "foreign-counter" => demo_foreign_counter()
+    "pools" => demo_pools(v)
+    "compress" => demo_compress(v)
     "all" => {
       demo_big_input(v)
       demo_multi_turn(v)
       demo_rag(v)
       demo_foreign_counter()
+      demo_pools(v)
+      demo_compress(v)
     }
     _ => raise Failure::Failure("unknown example: " + case)
   }

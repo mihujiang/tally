@@ -1,0 +1,14 @@
+tally-plan v3
+counter cl100k_base exact=true
+window 60
+reserve 0
+input_limit 60
+used 60
+pinned 26
+overflow false
+[pools]
+[kept]
+0 pinned system 26
+[truncated]
+1 newest payload 60->34 compress omitted=55
+[dropped]

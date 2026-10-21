@@ -3,6 +3,8 @@
 // 目的：报告要能被冻结、被 diff、被当成指纹。行尾统一 `\n`。
 // 与 v1 的差别：多了计数器身份（谁算的、精不精确）、窗口模型三行，
 // 以及 `[truncated]` 一节（截短了多少、截的哪一头）。
+// 与 v2 的差别：多了 `[pools]` 一节（配额、需求、实际占用、借入借出），
+// `[truncated]` 行尾多一列 `omitted=`（被省略量；`Compress` 的标记里也是这个数）。
 
 ///|
 fn push_str(out : Array[Char], s : String) -> Unit {
@@ -27,19 +29,22 @@ fn strategy_name(s : TruncateStrategy) -> String {
     NoTruncate => "none"
     KeepPrefix => "prefix"
     KeepSuffix => "suffix"
+    Compress => "compress"
   }
 }
 
 ///|
-/// 把计划渲染成规范文本。冻结为格式 `tally-plan v2`。
+/// 把计划渲染成规范文本。冻结为格式 `tally-plan v3`。
 ///
 /// 两条格式约束（不新增转义，保持行结构可被空格切分）：
-/// * `counter` 的名字与段 `role` **不得含空格或换行**——它们直接进行内；
+/// * `counter` 的名字、段 `role` 与池名 **不得含空格或换行**——它们直接进行内；
 /// * `overflow` 为真时 `[dropped]` 末尾有一行哨兵：`-1 pinned *overflow* <excess> <原因>`，
 ///   它不是某个段，按段对账（求和、计数）时要按 `index == -1` 跳过。
+///
+/// `[pools]` 行格式：`<池名> <配额> <需求> <占用> <借入> <借出>`，按声明顺序。
 pub fn Plan::render(self : Plan) -> String {
   let out : Array[Char] = []
-  push_str(out, "tally-plan v2\n")
+  push_str(out, "tally-plan v3\n")
   push_str(out, "counter ")
   push_str(out, self.counter)
   push_str(out, " exact=")
@@ -56,7 +61,22 @@ pub fn Plan::render(self : Plan) -> String {
   push_i64(out, self.pinned_tokens)
   push_str(out, "\noverflow ")
   push_bool(out, self.overflow)
-  push_str(out, "\n[kept]\n")
+  push_str(out, "\n[pools]\n")
+  for p in self.pools {
+    push_str(out, p.name)
+    out.push(' ')
+    push_i64(out, p.quota)
+    out.push(' ')
+    push_i64(out, p.demand)
+    out.push(' ')
+    push_i64(out, p.used)
+    out.push(' ')
+    push_i64(out, p.borrowed)
+    out.push(' ')
+    push_i64(out, p.lent)
+    out.push('\n')
+  }
+  push_str(out, "[kept]\n")
   for k in self.kept {
     push_str(out, k.index.to_string())
     out.push(' ')
@@ -80,6 +100,8 @@ pub fn Plan::render(self : Plan) -> String {
     push_i64(out, t.tokens)
     out.push(' ')
     push_str(out, strategy_name(t.strategy))
+    push_str(out, " omitted=")
+    push_i64(out, t.omitted)
     out.push('\n')
   }
   push_str(out, "[dropped]\n")

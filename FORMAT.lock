@@ -5,7 +5,7 @@
 #
 # 冻结的格式：
 #   tally-vocab v1   词表规范文本，可 diff、可指纹（vocab/export.mbt）
-#   tally-plan  v2   预算计划报告（budget/report.mbt）
+#   tally-plan  v3   预算计划报告，含 [pools] 池台账与 truncated 的 omitted（budget/report.mbt）
 #   tally-train v1   训练产物配方（vocab/train_format.mbt）
 #   tally-digest v1  报告摘要侧车，校验口径（budget/digest.mbt）
 #   tally-seal  v1   摘要的密钥印记，HMAC-SHA256（budget/seal.mbt）
@@ -15,11 +15,13 @@
 
 [frozen]
 tally-vocab v1 	tests/golden/sample-vocab.txt   	   3529	be797b4c1ea9f4dd35dbc964054ecd9e05df01f0b928177c20d4b7bc479cda72
-tally-plan v2  	tests/golden/sample-plan.txt    	    315	d7dd9d5b3be1ca3b079fa999cabbf0b613e5a14c8514fea856dbbc329ba9acbe
-tally-plan v2  	tests/golden/sample-plan-overflow.txt	    261	317c0e78e5a7d403982f7bc1d39594b489db6da04cbea75ab88a21f498d66662
-tally-plan v2  	tests/golden/sample-plan-truncated.txt	    186	78b45e9a03b4464202decb31cc4ccbcb551312ec8a12db6a1f4050c3127efadf
+tally-plan v3  	tests/golden/sample-plan.txt    	    323	4bf0f9fe4a1fb76119008608f7ba3d04584c92804e3919b81e409d1499d57ffc
+tally-plan v3  	tests/golden/sample-plan-overflow.txt	    269	992d453390e1eb61c6131b15cc2a0ef82e2e179a0f123b147e5a354fd370d7c7
+tally-plan v3  	tests/golden/sample-plan-truncated.txt	    204	95864c2e02dc510e8de6f1e7881cd4e99ca66db6be88464522a46523c4070c3c
+tally-plan v3  	tests/golden/sample-plan-pools.txt	    216	6e286c183f53c7eb63ef09d8dedabf2c57022a4d7ab4b80d7ece51b43ec2636f
+tally-plan v3  	tests/golden/sample-plan-compressed.txt	    211	6810ae809046ea99e727e4480092172cc4be3cc803f215b94c0b9d54e5ce2a45
 tally-train v1 	tests/golden/sample-train.txt   	    641	b6fe732be81a49f662223bbc55c506f8935b8ced2539c8f1e0fc856c25db8d6f
-tally-digest v1	tests/golden/sample-digest.txt  	    337	3e8f5ace11c2a7824653fb0e43e4824e970b6fc370d29782922a63061134f155
-tally-digest v1	tests/golden/sample-digest-overflow.txt	    254	5fdbe9602dc248fbf60a9398fd9696283cc5c7f5c42c46398bb44927c0299515
-tally-digest v1	tests/golden/sample-digest-truncated.txt	    318	a9793d628de80d94a8ee97b54dbc73f0d09d41521a44f326b107ad41ab2a378a
-tally-seal v1  	tests/golden/sample-seal.txt    	    185	bb478313cfa9049e3223c7a524999626dd55c32a98e824ecbff9af8bff4a2818
+tally-digest v1	tests/golden/sample-digest.txt  	    337	ddd016f8ab3f232ac1d3bbb761435b52e5f6300ef9b86b671889bdb41ae0b063
+tally-digest v1	tests/golden/sample-digest-overflow.txt	    254	dcd960b61e3d99295c2dcc66b6858c7e454a44723c04ddbfa6c3a2ab6cfc24ec
+tally-digest v1	tests/golden/sample-digest-truncated.txt	    318	795d5567916c84b9abc135d44b97f1d788f8d11d30eca4f4ab742d83848fbf07
+tally-seal v1  	tests/golden/sample-seal.txt    	    185	22d6c52d0e667a62a0bb3a2a8256cc33df7d81219dd14f8845c354818f51709f

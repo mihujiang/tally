@@ -37,7 +37,7 @@ fn usage() -> Unit {
   println("")
   println("usage:")
   println(
-    "  tally fit    --vocab <file> --limit <n> [--reserve <n>] [--truncate none|tail|head] [--file <f>]",
+    "  tally fit    --vocab <file> --limit <n> [--reserve <n>] [--truncate none|tail|head|compress] [--file <f>|--text <s>]",
   )
   println("  tally count  --vocab <file> [--text <s> | --file <f>] [--explain]")
   println("  tally encode --vocab <file> [--text <s> | --file <f>]")
@@ -49,6 +49,23 @@ fn usage() -> Unit {
   )
   println(
     "  tally seal   --digest <f> (--key <s> | --key-file <f>) [--key-id <id>]",
+  )
+  println("")
+  println("segments and pools (1.0；均可重复，digest / verify 的复算同样接受):")
+  println(
+    "  --segment <role>:<priority>:<path>    priority = pinned|newest|middle|oldest",
+  )
+  println(
+    "                                        给了 --segment 就不再造默认的 system+payload 两段",
+  )
+  println(
+    "  --pool <name>=<limit>                 池配额；借用顺序 = 声明顺序",
+  )
+  println(
+    "  --segment-pool <role>=<name>          把该 role 的所有段归入某个池",
+  )
+  println(
+    "  --segment-score <role>=<n>            同优先级内的取舍分数（越大越优先保留）",
   )
 }
 
@@ -90,6 +107,11 @@ fn run(args : Array[String]) -> Unit raise {
   let mut key : String? = None
   let mut key_file : String? = None
   let mut key_id = ""
+  // 段与池：`--segment <role>:<priority>:<path>`，池与分数按 role 挂上去。
+  let pool_decls : Array[(String, Int64)] = []
+  let segment_specs : Array[(String, String, String)] = []
+  let segment_pools : Array[(String, String)] = []
+  let segment_scores : Array[(String, Int64)] = []
   let mut i = 0
   while i < args.length() {
     let a = args[i]
@@ -138,12 +160,59 @@ fn run(args : Array[String]) -> Unit raise {
     } else if a == "--truncate" && has_next {
       // 不认识的策略直接报错：静默回落成 none 会让「以为截了其实没截」。
       let mode = args[i + 1]
-      if mode != "none" && mode != "tail" && mode != "head" {
+      if mode != "none" && mode != "tail" && mode != "head" && mode != "compress" {
         raise Failure::Failure(
-          "--truncate expects none|tail|head, got: \"" + mode + "\"",
+          "--truncate expects none|tail|head|compress, got: \"" + mode + "\"",
         )
       }
       truncate_mode = mode
+      i = i + 2
+    } else if a == "--pool" && has_next {
+      let (name, raw) = split_pair("--pool", args[i + 1], '=', "<name>=<limit>")
+      check_token("--pool name", name)
+      pool_decls.push((name, parse_i64("--pool", raw)))
+      i = i + 2
+    } else if a == "--segment" && has_next {
+      // 只切前两个冒号：`role` / `priority` 不含冒号，其余全部算路径
+      // （Windows 盘符与 URL 里的冒号因此不会被吃掉）。
+      let (role, rest) = split_pair(
+        "--segment",
+        args[i + 1],
+        ':',
+        "<role>:<priority>:<path>",
+      )
+      let (prio, path) = split_pair(
+        "--segment",
+        rest,
+        ':',
+        "<role>:<priority>:<path>",
+      )
+      check_token("--segment role", role)
+      // 先校验优先级名，避免拼错时静默用默认值。
+      let _ = priority_of(prio)
+      if path == "" {
+        raise Failure::Failure("--segment expects <role>:<priority>:<path>, got empty path")
+      }
+      segment_specs.push((role, prio, path))
+      i = i + 2
+    } else if a == "--segment-pool" && has_next {
+      let (role, name) = split_pair(
+        "--segment-pool",
+        args[i + 1],
+        '=',
+        "<role>=<pool>",
+      )
+      check_token("--segment-pool pool name", name)
+      segment_pools.push((role, name))
+      i = i + 2
+    } else if a == "--segment-score" && has_next {
+      let (role, raw) = split_pair(
+        "--segment-score",
+        args[i + 1],
+        '=',
+        "<role>=<score>",
+      )
+      segment_scores.push((role, parse_i64("--segment-score", raw)))
       i = i + 2
     } else if a == "--explain" {
       explain = true
@@ -227,15 +296,32 @@ fn run(args : Array[String]) -> Unit raise {
       None => ()
     }
     // 端到端复算：策略与输入都给齐时，重跑一遍必须逐字节还原报告与摘要。
-    match (vocab_path, file) {
-      (Some(vf), Some(input_file)) => {
+    // 「输入」可以是 `--file` / `--text`，也可以是 `--segment` 列出的段文件。
+    let input_bytes = match file {
+      Some(f) => Some(@fs.read_file_to_bytes(f))
+      None =>
+        match text {
+          Some(t) => Some(@utf8.encode(t))
+          // 只用 `--segment` 时没有单段输入；给空字节占位，默认段不会因此被造出来。
+          None => if segment_specs.length() > 0 { Some(Bytes::new(0)) } else { None }
+        }
+    }
+    match (vocab_path, input_bytes) {
+      (Some(vf), Some(bytes)) => {
         let vocab = @tally.load(read_text_file(vf))
         let plan = make_plan(
           vocab,
-          @fs.read_file_to_bytes(input_file),
+          build_segments(
+            segment_specs,
+            bytes,
+            segment_pools,
+            segment_scores,
+            pool_decls,
+          ),
           limit,
           reserve,
           truncate_mode,
+          pool_decls,
         )
         let rebuilt_report = plan.render()
         let rebuilt_digest = plan.render_digest()
@@ -299,13 +385,150 @@ fn run(args : Array[String]) -> Unit raise {
     }
     // `render()` 已以 `\n` 结尾；`println` 会再补一个，打印前先去掉，落盘才是规范形。
     "fit" =>
-      println(chomp(make_plan(vocab, input_bytes, limit, reserve, truncate_mode).render()))
+      println(
+        chomp(
+          make_plan(
+            vocab,
+            build_segments(
+              segment_specs,
+              input_bytes,
+              segment_pools,
+              segment_scores,
+              pool_decls,
+            ),
+            limit,
+            reserve,
+            truncate_mode,
+            pool_decls,
+          ).render(),
+        ),
+      )
     "digest" =>
       println(
-        chomp(make_plan(vocab, input_bytes, limit, reserve, truncate_mode).render_digest()),
+        chomp(
+          make_plan(
+            vocab,
+            build_segments(
+              segment_specs,
+              input_bytes,
+              segment_pools,
+              segment_scores,
+              pool_decls,
+            ),
+            limit,
+            reserve,
+            truncate_mode,
+            pool_decls,
+          ).render_digest(),
+        ),
       )
     _ => usage()
   }
+}
+
+///|
+/// 段的装配口径只有一处：`--segment` 给定时用它，否则仍是
+/// `system`（Pinned）+ `payload`（Newest，来自 `--text` / `--file`）两段。
+///
+/// 池与分数按 **role** 挂到段上：`--segment-pool history=turns` 会把所有
+/// `role == "history"` 的段归入 `turns` 池（多轮历史里角色本来就重复）。
+/// role 拼错时直接报错，而不是静默地"没生效"。
+fn build_segments(
+  specs : Array[(String, String, String)],
+  input_bytes : Bytes,
+  seg_pools : Array[(String, String)],
+  seg_scores : Array[(String, Int64)],
+  declared_pools : Array[(String, Int64)],
+) -> Array[@budget.Segment] raise {
+  let segments : Array[@budget.Segment] = []
+  if specs.length() == 0 {
+    segments.push(
+      @budget.Segment::text("system", @budget.Pinned, "you are a helpful assistant."),
+    )
+    segments.push(@budget.Segment::new("payload", @budget.Newest, input_bytes))
+  } else {
+    for spec in specs {
+      let (role, prio, path) = spec
+      if !@fs.path_exists(path) {
+        raise Failure::Failure("segment file not found: " + path)
+      }
+      segments.push(
+        @budget.Segment::new(role, priority_of(prio), @fs.read_file_to_bytes(path)),
+      )
+    }
+  }
+  for entry in seg_pools {
+    let (role, name) = entry
+    // 归入一个没声明配额的池等于什么也没做；这种"静默不生效"必须先点破。
+    if !has_pool(declared_pools, name) {
+      raise Failure::Failure(
+        "--segment-pool: pool \"" +
+        name +
+        "\" is not declared; add --pool " +
+        name +
+        "=<limit>",
+      )
+    }
+    let hits = assign_pool(segments, role, name)
+    if hits == 0 {
+      raise Failure::Failure(
+        "--segment-pool: no segment with role \"" + role + "\"",
+      )
+    }
+  }
+  for entry in seg_scores {
+    let (role, score) = entry
+    let hits = assign_score(segments, role, score)
+    if hits == 0 {
+      raise Failure::Failure(
+        "--segment-score: no segment with role \"" + role + "\"",
+      )
+    }
+  }
+  segments
+}
+
+///|
+fn has_pool(declared : Array[(String, Int64)], name : String) -> Bool {
+  for entry in declared {
+    let (n, _) = entry
+    if n == name {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn assign_pool(
+  segments : Array[@budget.Segment],
+  role : String,
+  name : String,
+) -> Int {
+  let mut hits = 0
+  for i = 0; i < segments.length(); i = i + 1 {
+    if segments[i].role == role {
+      segments[i] = segments[i].with_pool(name)
+      hits = hits + 1
+    }
+  }
+  hits
+}
+
+///|
+fn assign_score(
+  segments : Array[@budget.Segment],
+  role : String,
+  score : Int64,
+) -> Int {
+  let mut hits = 0
+  for i = 0; i < segments.length(); i = i + 1 {
+    if segments[i].role == role {
+      segments[i] = segments[i].with_score(score)
+      hits = hits + 1
+    }
+  }
+  hits
 }
 
 ///|
@@ -313,27 +536,89 @@ fn run(args : Array[String]) -> Unit raise {
 /// 而出现"报告和摘要不是同一份计划"的情况。
 fn make_plan(
   vocab : @tally.Vocab,
-  input_bytes : Bytes,
+  segments : Array[@budget.Segment],
   limit : Int64,
   reserve : Int64,
   truncate_mode : String,
+  pools : Array[(String, Int64)],
 ) -> @budget.Plan raise {
   let limit = if limit <= 0L { 4096L } else { limit }
   let strategy = match truncate_mode {
     "tail" => @tally.truncate_tail()
     "head" => @tally.truncate_head()
+    "compress" => @tally.truncate_compress()
     _ => @tally.truncate_none()
   }
-  // MVP：把输入整体视为一段 Newest 段，演示装配、截断与丢弃报告。
-  let segments = [
-    @budget.Segment::text("system", @budget.Pinned, "you are a helpful assistant."),
-    @budget.Segment::new("payload", @budget.Newest, input_bytes),
-  ]
-  let cfg = @tally
+  let mut cfg = @tally
     .fit_config(@tally.cl100k(vocab), limit + reserve)
     .with_reserve(reserve)
     .with_strategy(strategy)
+  if pools.length() > 0 {
+    cfg = @tally.fit_config_pools(cfg, pools)
+  }
   @tally.fit_with(cfg, segments)
+}
+
+///|
+/// 在**第一个** `sep` 处拆成两半（右侧原样保留，所以路径里的冒号不会被吃掉）；
+/// 没有分隔符或左边为空就报错，错误文案里写清期望形状。
+fn split_pair(
+  flag : String,
+  s : String,
+  sep : Char,
+  shape : String,
+) -> (String, String) raise {
+  let chars = s.to_array()
+  let n = chars.length()
+  let mut at = -1
+  for i = 0; i < n; i = i + 1 {
+    if chars[i] == sep {
+      at = i
+      break
+    }
+  }
+  if at < 0 {
+    raise Failure::Failure(flag + " expects " + shape + ", got: \"" + s + "\"")
+  }
+  let left = String::from_array(chars[0:at].to_owned())
+  let right = String::from_array(chars[at + 1:n].to_owned())
+  if left == "" {
+    raise Failure::Failure(
+      flag + " expects " + shape + ", got empty left side: \"" + s + "\"",
+    )
+  }
+  (left, right)
+}
+
+///|
+/// 会直接进报告的词（role / 池名）不得含空白：报告按空格切列。
+fn check_token(flag : String, s : String) -> Unit raise {
+  if s == "" {
+    raise Failure::Failure(flag + " must not be empty")
+  }
+  for c in s.to_array() {
+    if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+      raise Failure::Failure(
+        flag + " must not contain whitespace (it goes into the report verbatim): \"" +
+        s +
+        "\"",
+      )
+    }
+  }
+}
+
+///|
+fn priority_of(name : String) -> @budget.Priority raise {
+  match name {
+    "pinned" => @budget.Pinned
+    "newest" => @budget.Newest
+    "middle" => @budget.Middle
+    "oldest" => @budget.Oldest
+    _ =>
+      raise Failure::Failure(
+        "--segment priority expects pinned|newest|middle|oldest, got: \"" + name + "\"",
+      )
+  }
 }
 
 ///|

@@ -1,4 +1,4 @@
-tally-plan v2
+tally-plan v3
 counter cl100k_base exact=true
 window 1
 reserve 0
@@ -6,6 +6,7 @@ input_limit 1
 used 3
 pinned 3
 overflow true
+[pools]
 [kept]
 0 pinned system 3
 [truncated]

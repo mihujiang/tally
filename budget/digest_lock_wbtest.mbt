@@ -13,7 +13,7 @@
 /// 混合场景：两段保留、两段丢弃；丢弃段的 sha 固定为 `-`，不参与段哈希。
 let frozen_digest_mixed : String =
   "tally-digest v1\n" +
-  "report d7dd9d5b3be1ca3b079fa999cabbf0b613e5a14c8514fea856dbbc329ba9acbe\n" +
+  "report 4bf0f9fe4a1fb76119008608f7ba3d04584c92804e3919b81e409d1499d57ffc\n" +
   "plan 1c34c7228212ecffb3551f8f8b2b4a42a6f07dca135a0d4dd1e95daa3eee2e25\n" +
   "[segments]\n" +
   "0 kept 518b67e652531c5fe7e25d6b2c3b4ef6224e7d90da2091967dd47eb082b26a19\n" +
@@ -26,7 +26,7 @@ let frozen_digest_mixed : String =
 /// 但它不是某一段，所以 sha 同样是 `-`。
 let frozen_digest_overflow : String =
   "tally-digest v1\n" +
-  "report 317c0e78e5a7d403982f7bc1d39594b489db6da04cbea75ab88a21f498d66662\n" +
+  "report 992d453390e1eb61c6131b15cc2a0ef82e2e179a0f123b147e5a354fd370d7c7\n" +
   "plan 0a0b071c8a36f05d88b9393cf00349de2572e3aa8c8243599975b2173a1b164d\n" +
   "[segments]\n" +
   "-1 dropped -\n" +
@@ -36,7 +36,7 @@ let frozen_digest_overflow : String =
 /// 截断场景：段哈希覆盖的是**进窗口的那部分字节**（前缀 3 字节），不是原文。
 let frozen_digest_truncated : String =
   "tally-digest v1\n" +
-  "report 78b45e9a03b4464202decb31cc4ccbcb551312ec8a12db6a1f4050c3127efadf\n" +
+  "report 95864c2e02dc510e8de6f1e7881cd4e99ca66db6be88464522a46523c4070c3c\n" +
   "plan ef2ca2d7f5f354114d40886ebd8b19f79969333791a681e4f7462bf95c2c446e\n" +
   "[segments]\n" +
   "0 kept 518b67e652531c5fe7e25d6b2c3b4ef6224e7d90da2091967dd47eb082b26a19\n" +

@@ -36,6 +36,24 @@ VOCAB = "tests/golden/sample-vocab.txt"
 # fit / digest / verify 用同一组参数，否则"复算"比较的就不是同一份计划。
 FIT_ARGS = ["--limit", "30", "--reserve", "4", "--truncate", "tail"]
 
+# 1.0 的段/池参数：同样要在 fit / digest / verify 三处保持一致。
+SEGMENT_ARGS = [
+    "--segment",
+    "system:pinned:{tmp}/system.txt",
+    "--segment",
+    "tools:newest:{tmp}/tools.txt",
+    "--segment",
+    "history:oldest:{tmp}/history.txt",
+    "--pool",
+    "tools=10",
+    "--pool",
+    "history=300",
+    "--segment-pool",
+    "tools=tools",
+    "--segment-pool",
+    "history=history",
+]
+
 
 def cli(*args: str) -> list[str]:
     return ["moon", "run", "cmd/main", "--target", "js", "--", *args]
@@ -109,6 +127,115 @@ CASES = [
             },
         ],
         "expected": "examples/expected/cli-verify-ok.txt",
+    },
+    # 1.0 新能力：占位压缩。被截掉的尾部换成固定标记，标记里写着省略量。
+    {
+        "name": "cli-compress",
+        "steps": [
+            {"write": {"name": "payload.txt", "text": "hello world " * 20}},
+            {
+                "run": cli(
+                    "fit",
+                    "--vocab",
+                    VOCAB,
+                    "--limit",
+                    "60",
+                    "--truncate",
+                    "compress",
+                    "--file",
+                    "{tmp}/payload.txt",
+                ),
+            },
+        ],
+        "expected": "examples/expected/cli-compress.txt",
+    },
+    # 1.0 新能力：多段 + 多池。`--segment` 指定段，`--pool` 声明配额，
+    # `--segment-pool` 把某个 role 的所有段归入池；配额不够时按声明顺序借用。
+    {
+        "name": "cli-pools",
+        "steps": [
+            {"write": {"name": "system.txt", "text": "you are a coding agent."}},
+            {
+                "write": {
+                    "name": "tools.txt",
+                    "text": "read_file(path) -> returns the file content as text",
+                }
+            },
+            {
+                "write": {
+                    "name": "history.txt",
+                    "text": "user: how do i publish this module?\n" * 6,
+                }
+            },
+            {
+                "run": cli(
+                    "fit",
+                    "--vocab",
+                    VOCAB,
+                    "--limit",
+                    "400",
+                    *SEGMENT_ARGS,
+                ),
+            },
+        ],
+        "expected": "examples/expected/cli-pools.txt",
+    },
+    # 同一组段与池参数交给 `verify` 复算：新参数必须和 fit / digest 走同一条口径，
+    # 否则"复算通过"只是三个子命令各自编故事。
+    {
+        "name": "cli-verify-pools",
+        "steps": [
+            {"write": {"name": "system.txt", "text": "you are a coding agent."}},
+            {
+                "write": {
+                    "name": "tools.txt",
+                    "text": "read_file(path) -> returns the file content as text",
+                }
+            },
+            {
+                "write": {
+                    "name": "history.txt",
+                    "text": "user: how do i publish this module?\n" * 6,
+                }
+            },
+            {
+                "capture": cli(
+                    "fit",
+                    "--vocab",
+                    VOCAB,
+                    "--limit",
+                    "400",
+                    *SEGMENT_ARGS,
+                ),
+                "into": "report.txt",
+            },
+            {
+                "capture": cli(
+                    "digest",
+                    "--vocab",
+                    VOCAB,
+                    "--limit",
+                    "400",
+                    *SEGMENT_ARGS,
+                ),
+                "into": "digest.txt",
+            },
+            {
+                "run": cli(
+                    "verify",
+                    "--report",
+                    "{tmp}/report.txt",
+                    "--digest",
+                    "{tmp}/digest.txt",
+                    "--vocab",
+                    VOCAB,
+                    "--limit",
+                    "400",
+                    *SEGMENT_ARGS,
+                ),
+            },
+        ],
+        "expected": "examples/expected/cli-verify-pools.txt",
     },
     # 反向证明：拿两份**都真实存在**但不配对的样本，`verify` 必须指出是谁对不上，
     # 并把两个 sha256 都打出来（人不用再去算一遍）。
