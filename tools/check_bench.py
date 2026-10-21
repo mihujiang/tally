@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """跑 `cmd/perf` 的两项基准，与 `tests/bench/baseline.json` 比，退化超阈值即失败。
 
-基准只防退化，不设优化目标（ROADMAP V0.7）。CI 与本地机器不同，阈值默认 2.0，
-这是为机器差异留的余量，不是性能承诺。
+基准只防退化，不设优化目标（ROADMAP V0.7）。阈值默认 2.0，不是性能承诺。
+
+基线是在一台具体的机器上记录的（现在这台是 Windows）。同一 OS 上比绝对毫秒还有意义，
+跨 OS 就没有了：CI 是 Linux 共享 runner，和基线机器不同，2× 的余量会被几行新代码吃掉
+（0.8.0 端到端只慢 4%，就越过了 2×）。所以跨 OS 时阈值放到 3.0，此刻它只抓数量级退化；
+两边的机器与实测比例都会打印出来，失败时同时发一条 GitHub 注解（日志要登录才能看，注解不用）。
 
 用法：
   python tools/check_bench.py            # 跑并与基线比
@@ -16,6 +20,7 @@ import argparse
 import datetime
 import json
 import locale
+import os
 import platform
 import re
 import subprocess
@@ -76,11 +81,32 @@ def machine() -> dict[str, str]:
     }
 
 
+def os_name(text: str) -> str:
+    """`platform.platform()` 里的系统族；不认识就返回 unknown（当作跨 OS 处理）。"""
+    for name in ("Windows", "Linux", "Darwin"):
+        if name in text:
+            return name
+    return "unknown"
+
+
+def annotate(level: str, title: str, message: str) -> None:
+    """在 CI 里发一条注解：步骤日志要登录才能看，注解可以匿名读。"""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    print("::%s title=%s::%s" % (level, title, message.replace("\n", "%0A")))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", default="wasm-gc")
     ap.add_argument("--debug", action="store_true", help="不做 --release 构建")
     ap.add_argument("--max-ratio", type=float, default=2.0)
+    ap.add_argument(
+        "--cross-os-max-ratio",
+        type=float,
+        default=3.0,
+        help="基线与本机不是同一个 OS 时的阈值：绝对毫秒跨系统不可紧比，只抓数量级退化",
+    )
     ap.add_argument("--write", action="store_true", help="把当前结果写成新基线")
     ap.add_argument("--from-file", type=Path, help="解析已有输出而不是重跑")
     args = ap.parse_args()
@@ -116,7 +142,19 @@ def main() -> int:
         "基线：%s %s，记录于 %s"
         % (base["target"], base["mode"], base["recorded_at"])
     )
-    print("阈值：当前 ≤ %.1fx 基线\n" % args.max_ratio)
+    base_os = os_name(base.get("machine", {}).get("platform", ""))
+    cur_os = os_name(platform.platform())
+    same_os = base_os == cur_os and base_os != "unknown"
+    cap = args.max_ratio if same_os else args.cross_os_max_ratio
+    print("基线机器：%s" % base.get("machine", {}).get("platform", "未记录"))
+    print("本机：%s（%s）" % (platform.platform(), cur_os))
+    if same_os:
+        print("阈值：当前 ≤ %.1fx 基线（同一 OS）\n" % cap)
+    else:
+        print(
+            "阈值：当前 ≤ %.1fx 基线（基线 %s / 本机 %s：跨系统只抓数量级退化）\n"
+            % (cap, base_os, cur_os)
+        )
 
     fails: list[str] = []
     for name, ms in current.items():
@@ -127,9 +165,9 @@ def main() -> int:
             continue
         base_ms = entry["median_ms"]
         ratio = ms / base_ms if base_ms > 0 else float("inf")
-        ok = ratio <= args.max_ratio
+        ok = ratio <= cap
         if not ok:
-            fails.append("%s: %.3f ms 是基线的 %.2fx" % (name, ms, ratio))
+            fails.append("%s: %.3f ms 是基线的 %.2fx（上限 %.1fx）" % (name, ms, ratio, cap))
         print(
             "%s  %-14s %8.3f ms  基线 %8.3f ms  %.2fx"
             % ("OK  " if ok else "FAIL", name, ms, base_ms, ratio)
@@ -140,11 +178,23 @@ def main() -> int:
             fails.append("%s: 基线有、本次没跑到" % name)
             print("FAIL  %-14s 本次未运行" % name)
 
+    # 实测值进注解：CI 机器不同，下一次调阈值要凭这些数字，而不是猜。
+    annotate(
+        "notice",
+        "bench",
+        " ".join(
+            "%s=%.3fms(%.2fx)" % (n, ms, ms / base["results"][n]["median_ms"])
+            for n, ms in current.items()
+            if n in base["results"] and base["results"][n]["median_ms"] > 0
+        ),
+    )
+
     print()
     if fails:
         print("基准失败 %d 项：" % len(fails))
         for f in fails:
             print("  - " + f)
+        annotate("error", "bench regression", "; ".join(fails))
         return 1
     print("基准通过（%d 项）" % len(current))
     return 0

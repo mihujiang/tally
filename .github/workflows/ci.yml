@@ -148,9 +148,11 @@ jobs:
           test "$out" = "verify ok"
           echo "pools + compress: recomputed on wasm-gc, pool ledger present"
 
-      # 基准只防退化：与 tests/bench/baseline.json 比，超过 2x 即失败（不设优化目标）。
+      # 基准只防退化（不设优化目标）。基线在 Windows 上记录，CI 是 Linux：
+      # 同一 OS 比 2x，跨 OS 放到 3x——绝对毫秒跨系统不可紧比，那一刻只抓数量级退化。
+      # 用 python3：ubuntu 镜像不保证有 `python`（rest 全部步骤也都是 python3）。
       - name: bench (wasm-gc, regression guard)
-        run: python tools/check_bench.py
+        run: python3 tools/check_bench.py
 
       # 发布包能被打出来（不发布、不需要凭据）。
       - name: package
