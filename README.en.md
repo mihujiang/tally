@@ -528,12 +528,15 @@ checked point by point against the generated tables, and a disjointness scan ove
 
 Machine and timestamp live in `tests/bench/baseline.json` (Windows 10 / Intel64 / Python 3.11).
 CI runs the same benchmarks and only asserts "no worse than 2x the baseline" — a regression guard,
-not a performance promise. But CI is Linux while the baseline was recorded on Windows, and absolute
-milliseconds are not comparable across systems: 0.8.0 was only 4% slower end to end (2.10 → 2.19 ms
-on the same machine, 0.7.0 vs 0.8.0) and that was enough to eat the 2x headroom. So **across
-operating systems the cap is 3x**, where the guard only catches order-of-magnitude regressions; the
-script prints both machines and every measured ratio, and emits a CI annotation so a failure can be
-diagnosed without opening the (login-gated) step log.
+not a performance promise. But CI is a Linux shared runner while the baseline was recorded on a
+Windows workstation, and absolute milliseconds are not comparable across machines: the same CI run
+measured `count-4kb` at 0.162 ms (**1.60x**) and `fit-100k-8k` at 2.99 ms (**1.58x**) — identical
+code, 60% slower `count`, leaving barely a third of the 2x headroom. 0.8.0 was also 4% slower end to
+end on the same machine (2.10 → 2.19 ms, 0.7.0 vs 0.8.0), which tipped it over (that CI run reported
+nothing but "exit code 1", since the log needs a login). So **across operating systems the cap is
+3x**, where the guard only catches order-of-magnitude regressions; the script prints both machines
+and every measured ratio, and emits a CI annotation so a failure can be diagnosed without opening
+the (login-gated) step log.
 The sample vocab has 277 tokens, so long text falls back to byte-level
 tokens; throughput with a real cl100k vocab will differ. These numbers are this repository's own baseline.
 
