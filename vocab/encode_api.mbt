@@ -32,12 +32,14 @@ pub fn Vocab::decode_ids(self : Vocab, ids : Array[Int]) -> Bytes {
 
 ///|
 /// 字节序列的 token 数（`Int64`：所有累计量都用 64 位，避免 32 位静默溢出）。
+///
+/// 走"只计数"路径，不分配 id 数组；结果与 `encode_bytes(bytes).length()` 相同。
 pub fn Vocab::count_bytes(self : Vocab, bytes : Bytes) -> Int64 {
-  self.encode_bytes(bytes).length().to_int64()
+  @bpe.encode_count(self.view(), bytes).to_int64()
 }
 
 ///|
-/// 文本的 token 数。
+/// 文本的 token 数。同样不分配 id 数组。
 pub fn Vocab::count(self : Vocab, text : String) -> Int64 {
-  @bpe.encode(self.view(), @utf8.encode(text)).length().to_int64()
+  @bpe.encode_count(self.view(), @utf8.encode(text)).to_int64()
 }

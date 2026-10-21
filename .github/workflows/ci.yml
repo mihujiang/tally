@@ -124,6 +124,10 @@ jobs:
           test "$out" = "verify ok"
           echo "recomputed: report $(wc -c < "$tmp/report.txt") bytes, digest $(wc -c < "$tmp/digest.txt") bytes"
 
+      # 基准只防退化：与 tests/bench/baseline.json 比，超过 2x 即失败（不设优化目标）。
+      - name: bench (wasm-gc, regression guard)
+        run: python tools/check_bench.py
+
       # 发布包能被打出来（不发布、不需要凭据）。
       - name: package
         run: moon package

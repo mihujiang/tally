@@ -13,6 +13,11 @@ pub(all) struct Vocab {
   tokens : Array[Bytes]
   ranks : Map[Bytes, Int]
   ids : Map[Bytes, Int]
+  /// 与 `ranks` / `ids` 同内容的短键表：≤ `@bpe.SHORT_MAX` 字节的 token
+  /// 被 `@bpe.pack_short` 打包成 `Int64`，编码热路径查这两张表就省掉了
+  /// 每次都拼一个 `Bytes` 出来。构建期一次性填好。
+  rank_short : Map[Int64, Int]
+  id_short : Map[Int64, Int]
   specials : Array[(String, Int)]
   byte_ids : Array[Int]
 }
@@ -57,10 +62,29 @@ pub fn build_vocab(
     sorted.push((lit, id))
   }
   sort_specials(sorted)
+  // 短键表：与 ranks / ids 逐项对应，只是键换成 Int64。
+  let rank_short : Map[Int64, Int] = Map([])
+  for entry in ranks {
+    let (key, r) = entry
+    let len = key.length()
+    if len > 0 && len <= @bpe.SHORT_MAX {
+      rank_short.set(@bpe.pack_short(key, 0, len), r)
+    }
+  }
+  let id_short : Map[Int64, Int] = Map([])
+  for entry in ids {
+    let (key, id) = entry
+    let len = key.length()
+    if len > 0 && len <= @bpe.SHORT_MAX {
+      id_short.set(@bpe.pack_short(key, 0, len), id)
+    }
+  }
   {
     tokens,
     ranks,
     ids,
+    rank_short,
+    id_short,
     specials: sorted,
     byte_ids,
   }
@@ -148,6 +172,8 @@ pub fn Vocab::view(self : Vocab) -> @bpe.VocabView {
     byte_ids: self.byte_ids,
     rank_of: self.ranks,
     id_of: self.ids,
+    rank_short: self.rank_short,
+    id_short: self.id_short,
     specials: sp,
   }
 }

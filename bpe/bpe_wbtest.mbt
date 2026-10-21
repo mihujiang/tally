@@ -33,7 +33,24 @@ fn view_with(
   for e in specials_in {
     specials.push(e)
   }
-  { tokens, byte_ids, rank_of, id_of, specials }
+  // 短键表：与 `vocab` 构建时同样的打包方式。
+  let rank_short : Map[Int64, Int] = Map([])
+  for entry in rank_of {
+    let (key, r) = entry
+    let len = key.length()
+    if len <= SHORT_MAX {
+      rank_short.set(pack_short(key, 0, len), r)
+    }
+  }
+  let id_short : Map[Int64, Int] = Map([])
+  for entry in id_of {
+    let (key, id) = entry
+    let len = key.length()
+    if len <= SHORT_MAX {
+      id_short.set(pack_short(key, 0, len), id)
+    }
+  }
+  { tokens, byte_ids, rank_of, id_of, rank_short, id_short, specials }
 }
 
 ///|

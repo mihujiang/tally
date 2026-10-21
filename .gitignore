@@ -28,6 +28,7 @@ tools/*
 !tools/gen_format_lock.py
 !tools/fetch_vocab.py
 !tools/check_examples.py
+!tools/check_bench.py
 
 # 大型外部数据（大词表由调用方提供，小样本进仓库）
 # 整个目录都忽略：否则空目录本身也会被 moon 打进发布包。

@@ -375,6 +375,40 @@ CI runs all three.
 | Backends | `wasm-gc` and `js` only; native is not guaranteed |
 | Training | implemented (`vocab/train.mbt`), a capability proof, frozen; the fixture vocabulary is generated deterministically by `tools/gen_sample_vocab.py` |
 
+## Performance (unoptimized)
+
+Numbers only, no optimization target: neither `count` nor end-to-end fitting uses caching or
+incremental tricks. Reproduce with:
+
+```bash
+moon bench -p cmd/perf --release --target wasm-gc   # the two benchmarks
+python tools/check_bench.py                        # fails if 2x slower than the baseline
+```
+
+| Benchmark | Input | Unoptimized | First round | Second round (current) |
+|---|---|---|---|---|
+| `count-4kb` | 3,390 chars / 5,230 tokens | 0.399 ms | 0.257 ms | **0.101 ms** (~52 M tokens/s) |
+| `fit-100k-8k` | 96 segments / 99,840 tokens → 8,192 window (256 reserved) | 7.08 ms | 4.90 ms | **1.89 ms** |
+
+The first round was about doing less work: cache adjacent ranks while merging (only two positions
+recomputed per merge), route `count` through an allocation-free counting path, filter special tokens by
+their first byte, and reuse the last binary-search count when truncating.
+
+The second round was about allocating less: pretokenization now decodes in one pass and classifies each
+code point once (ASCII decided inline, first hit short-circuits); pieces of 1–3 bytes take a fast path
+that allocates no arrays; and the vocab precomputes an `Int64` short-key table for tokens of ≤ 7 bytes,
+so merging no longer builds a `Bytes` for every candidate.
+
+Together that is 3.9x for `count` and 3.7x end to end, with **byte-identical output** — 2,935 corpus
+cases, 152 tests on both backends, and 7 examples all agree. The second round's three fast paths have
+their own guards: 300 randomized rounds against the original 0.6.1 algorithm, ASCII classification
+checked point by point against the generated tables, and a disjointness scan over all 1.1M code points.
+
+Machine and timestamp live in `tests/bench/baseline.json` (Windows 10 / Intel64 / Python 3.11).
+CI runs the same benchmarks and only asserts "no worse than 2x the baseline" — a regression guard,
+not a performance promise. The sample vocab has 277 tokens, so long text falls back to byte-level
+tokens; throughput with a real cl100k vocab will differ. These numbers are this repository's own baseline.
+
 ## Development
 
 ```powershell
@@ -408,7 +442,7 @@ python tools/gen_format_lock.py --check
 python tools/check_examples.py
 ```
 
-Current size: **7 packages, 148 tests** (8 of them black-box, public API only), green on both
+Current size: **8 packages, 152 tests** (8 of them black-box, public API only), green on both
 `wasm-gc` and `js`; matrix A aligns **2,935 corpus cases** (16,273 tokens, zero differences)
 against the reference implementation; matrix D (reproducible training) is byte-identical
 across 5 parameter sets; matrix I (garbage input may only succeed or fail with a **named**
@@ -416,9 +450,10 @@ error) and matrix J (change one byte and verification must fail **with a positio
 `vocab/robustness_wbtest.mbt` and `budget/digest_wbtest.mbt`; HMAC is checked against six RFC
 4231 vectors (`budget/hmac_wbtest.mbt`) and the frozen seal sample is cross-checked against
 Python's `hmac`; **7 example cases** are committed byte for byte under `examples/expected/`,
-two of which must fail (and assert a non-zero exit code). All of it runs in
-`.github/workflows/ci.yml`: `verify` self-consistency, seal, end-to-end recompute, plus a
-regression step asserting a mismatched pair exits non-zero.
+two of which must fail (and assert a non-zero exit code); **2 benchmarks** (`cmd/perf`) have a
+committed baseline and CI only asserts "no worse than 2x". All of it runs in
+`.github/workflows/ci.yml`: `verify` self-consistency, seal, end-to-end recompute, a
+regression step asserting a mismatched pair exits non-zero, and the benchmark guard.
 
 ## License
 

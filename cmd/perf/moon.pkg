@@ -1,0 +1,7 @@
+// 基准只记录数字，不做优化承诺（ROADMAP V0.7）。
+import {
+  "moonbitlang/core/bench",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/x/fs",
+  "weopqrst/tally",
+}

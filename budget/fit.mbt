@@ -254,6 +254,9 @@ fn cut_to(
   }
   let mut lo = 0
   let mut hi = n
+  // 记住 lo 对应的计数：若最后没有因 UTF-8 边界回退，`kept` 就是二分里
+  // 已经数过的那段，不必再数一遍（长段上省掉一次完整编码）。
+  let mut lo_count = 0L
   while lo < hi {
     let mid = (lo + hi + 1) / 2
     let probe = if suffix {
@@ -261,8 +264,10 @@ fn cut_to(
     } else {
       slice_bytes(bytes, 0, mid)
     }
-    if counter.count(probe) <= target {
+    let c = counter.count(probe)
+    if c <= target {
       lo = mid
+      lo_count = c
     } else {
       hi = mid - 1
     }
@@ -280,5 +285,6 @@ fn cut_to(
   } else {
     slice_bytes(bytes, 0, len)
   }
-  (kept, counter.count(kept))
+  let kept_count = if len == lo { lo_count } else { counter.count(kept) }
+  (kept, kept_count)
 }
