@@ -322,7 +322,18 @@ V0.6 的"未做"只有两条，都是"别人想依赖却依赖不上"的问题�
 基准测试用 `test "..." (b : @bench.T)` 写法，不参与 `moon test`（152 项里多出的 4 条都是计数/快路径守门测试）。
 样本词表 277 token，长文本更多落到字节级 token，接真实 cl100k 后吞吐会变——这栏只代表本仓库基线。
 
-**完成标准**：基准进 CI，失败数 0 —— 已满足（CI 步骤 `bench (wasm-gc, unoptimized)`）。
+**完成标准**：基准进 CI，失败数 0 —— 已满足（CI 步骤 `bench (wasm-gc, regression guard)`）。
+
+**发布**（2026-10-21）：`moon publish` 服务端 `200 OK`，0.7.0 在 registry 标记为 latest
+（https://mooncakes.io/docs/weopqrst/tally）；线上包对应 `d158b7f`（推送 `fac4d6a..d158b7f`），
+之后只提交文档证据。注册表下发包与本地构建包 sha256 一致：
+`cc41d1fd5b53a9193552abf0e473b0e1d28214797f7b95e83d21a097705dd055`（240,047 字节 / 116 文件）。
+CI run [39527626238](https://github.com/mihujiang/tally/actions/runs/39527626238)：1 job / 21 步全绿，
+含 `wasm-gc`、`js`、examples、生成器 `--check` 与 bench 守卫。
+
+**外部验收**（仓库外，仅 `moon add weopqrst/tally@0.7.0`）：全新工程装 0.7.0 后，
+`wasm-gc` 与 `js` 输出逐字节相同 —— `tokens=259 ids=20 count=20 consistent=true roundtrip=true`、
+`train_vocab=274 deterministic=true`。
 
 ## V1.0 — 正式版 `1.0.0`
 
