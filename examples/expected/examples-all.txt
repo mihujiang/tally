@@ -17,21 +17,22 @@ overflow false
 [dropped]
 
 == 02 multi-turn: 12 turns, pinned system, 360 window / 40 reserved
-pinned_kept true dropped 8
+pinned_kept true dropped 7
 tally-plan v3
 counter cl100k_base exact=true
 window 360
 reserve 40
 input_limit 320
-used 267
+used 317
 pinned 51
 overflow false
 [pools]
 [kept]
 0 pinned system 51
+8 middle history 61
 9 middle history 45
 10 newest history 56
-11 newest history 49
+11 newest history 38
 12 newest history 66
 [truncated]
 [dropped]
@@ -42,7 +43,6 @@ overflow false
 5 middle history 49 为满足预算而丢弃（优先级低于 Newest）
 6 middle history 45 为满足预算而丢弃（优先级低于 Newest）
 7 middle history 36 为满足预算而丢弃（优先级低于 Newest）
-8 middle history 61 为满足预算而丢弃（优先级低于 Newest）
 
 == 03 rag: 6 chunks (same priority, scored) + question, 260 window / 20 reserved
 chunks 6 kept 4 dropped 4

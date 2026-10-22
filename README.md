@@ -2,11 +2,11 @@
 
 [English](./README.en.md) | 中文
 
-> **MoonBit 的上下文预算引擎**——把任意长度的上下文精确压进 token 预算，并告诉你丢了什么、为什么。
+> **MoonBit 上下文装配的可核验契约**——把任意长度的上下文精确压进 token 预算，并让「丢了什么、为什么」可以被第三方逐字节复算。
 
 上下文塞不进窗口是 agent 的必然事件，不是边界情况。常见做法是「字符数 ÷ 4」估算、再按长度硬切：切在半个 JSON 或半个工具调用中间，事后也无法解释为什么留下这一段、丢掉那一段。
 
-`tally` 做四件事，每一件都可核对：
+`tally` 做六件事，每一件都可核对：
 
 1. **精确计数**：cl100k 形状的 byte-level BPE，2,935 条语料与 `tiktoken 0.14.0` 逐 token 对齐，差异 0。
 2. **可解释装配**：按 `Priority` 把段落装进窗口，`Pinned` 永不裁，输出「丢了哪段、多少 token、为什么」。
@@ -17,7 +17,7 @@
 5. **可认账**（0.6.1）：摘要还能被一把共享密钥盖成 `tally-seal v1`，`verify --seal --key`
    一次验完「摘要没被换」和「有人认过」。它证明持有密钥的人签过，**不证明谁写的**——
    对称密钥没有身份，这一点写进格式而不是藏进文档。
-6. **预算不够时还有三件细活**（1.0）：**多池配额**（工具定义、多轮历史各有一份额度，
+6. **预算不够时还有三件细活**（0.8.0 已实现）：**多池配额**（工具定义、多轮历史各有一份额度，
    不够按声明顺序借用，逐池记 `borrowed` / `lent`）、**同优先级内按分数取舍**
    （检索分数不再被硬映射成优先级，而是同优先级里的次序）、**占位压缩**
    （被裁的尾部换成固定标记并写明省了多少 token，模型知道「这里还有内容」）。
@@ -49,9 +49,9 @@ match @tally.fit_with_result(cfg, segments) {
 `fit(v, segments, limit)` 仍然可用：等价于「整窗可用、无预留、整段丢弃」，与旧版行为一致
 （包括 `limit <= 0` 时全部丢弃 / Pinned 溢出上报，不抛错）。
 
-分词（`encode` / `decode` / `count`）是这套东西的**底座**：它保证预算层拿到的是精确数，而不是估算。
+分词（`encode` / `decode` / `count`）是这套东西的**底座**：它保证装配层拿到的是精确数，而不是估算。
 
-## 七个问题，一个引擎
+## 七个问题，一份契约
 
 | # | 问题 | tally 的回答 |
 |---|---|---|
@@ -63,7 +63,7 @@ match @tally.fit_with_result(cfg, segments) {
 | 6 | 工具定义和历史各有一份额度吗？ | `PoolQuota`：逐池配额 + 池间借用（按声明顺序），报告里逐池记配额/需求/占用/借入/借出 |
 | 7 | 为什么是这个结果？能复现吗？ | `Plan::render()`：`tally-plan v3` 规范文本，每段一行写明动作与量，进 `FORMAT.lock` 指纹 |
 
-## 1.0：预算不够时的三种细活
+## 0.8.0：预算不够时的三种细活
 
 ### 多池配额与借用
 
@@ -106,7 +106,7 @@ match @tally.fit_with_result(cfg, segments) {
 |---|---|---|---|
 | 算法内核 | `bpe` | 词表无关的 byte-level BPE 编码/解码、预切分扫描器、Unicode 属性表 | 仅 `core` |
 | 词表 | `vocab` | 词表模型、加载（含自写 base64）、规范文本导出、可复现 BPE 训练 | `bpe` + `core` |
-| **预算（产品本体）** | `budget` | **`Counter` 可插拔计数、窗口模型、优先级装配与截断，输出可解释、可冻结的报告** | `bpe` |
+| **装配与核验（产品本体）** | `budget` | **`Counter` 可插拔计数、窗口模型、优先级装配与截断，输出可解释、可冻结、可复算的报告** | `bpe` |
 | 门面 | `tally`（根包） | `fit_with` / `fit` / `encode` / `count` 的最短路径 | 以上三层 |
 | 工具与示例 | `cmd/main`、`cmd/examples` | CLI 与可运行示例（唯一有 IO 的地方） | `x/fs` |
 
@@ -118,19 +118,19 @@ match @tally.fit_with_result(cfg, segments) {
 
 | | `tokenizers-moonbit` | tally |
 |---|---|---|
-| 轴 | 广度：5 种算法、39 个模型、对接 HF | 收口：固定 cl100k，把预算做透 |
+| 轴 | 广度：5 种算法、39 个模型、对接 HF | 收口：固定 cl100k，把装配结论做成可核验的契约 |
 | 与参考实现对齐 | Python `tokenizers` 0.22.2 | `tiktoken` 0.14.0 |
 | 训练 | BPE / WordPiece / Unigram（跟随 HF 语义） | 只用 BPE，全序 tie-break，两次训练逐字节一致 |
-| 预算层 | 无 | `Priority` / `Pinned` / 丢弃报告 / 格式冻结 |
-| 适合 | 要多模型、WordPiece、Unigram、native | 要「装进窗口并解释」 |
+| 装配与核验 | 无 | `Priority` / `Pinned` / 丢弃报告 / 格式冻结 / 摘要与复算 |
+| 适合 | 要多模型、WordPiece、Unigram、native | 要「装进窗口、并让这个结论可被复算」 |
 
-需要通用分词器时用它；需要把上下文压进预算并留下可审计记录时用 tally。
+需要通用分词器时用它；需要把上下文装进窗口、且让「为什么这样装」可被第三方复算时用 tally。
 
 0.4.0 起 `budget` 只依赖 `Counter` 接口（`name` + `exact` + `count_bytes: (Bytes) -> Int64`）。
 0.4.1 把 `cl100k` 适配器也移到门面包，`budget` 的包级依赖只剩 `core`
 （`moon info` 里 `budget` 的 import 表不含 `vocab`）——`import weopqrst/tally/budget`
 不会把词表一起拖进来。
-把外部 tokenizer 的分词结果包成一个 `Counter`，就能用它计数、用我们的预算层裁剪：
+把外部 tokenizer 的分词结果包成一个 `Counter`，就能用它计数、用我们的装配与核验层裁剪：
 
 ```moonbit
 // 示意：适配外部 tokenizer，不需要给外部类型写 impl
@@ -191,7 +191,7 @@ fn demo(vocab_text : String) -> Unit raise {
     println(piece)
   }
 
-  // 6) 1.0：池配额 + 借用 + 占位压缩 + 同优先级按分数取舍
+  // 6) 0.8.0：池配额 + 借用 + 占位压缩 + 同优先级按分数取舍
   let pooled = [
     @tally.pinned("system", "you are a coding agent."),
     // 工具定义归 tools 池，分数 9：池内超额时分数低的先走
@@ -365,7 +365,7 @@ token 表可完全重建：
 | 格式 | 内容 | 冻结在哪 |
 |---|---|---|
 | `tally-vocab v1` | 词表规范文本（`vocab/export.mbt`） | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
-| `tally-plan v3` | 预算计划报告，含 `[pools]` 池台账与 `omitted=`（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated,-pools,-compressed}.txt` |
+| `tally-plan v3` | 装配计划报告，含 `[pools]` 池台账与 `omitted=`（`budget/report.mbt`） | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated,-pools,-compressed}.txt` |
 | `tally-train v1` | 训练产物配方（`vocab/train_format.mbt`） | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
 | `tally-digest v1` | 报告摘要侧车（`budget/digest.mbt`） | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
 | `tally-seal v1` | 摘要的密钥印记（`budget/seal.mbt`） | `budget/seal_lock_wbtest.mbt` + `tests/golden/sample-seal.txt` |
@@ -383,7 +383,7 @@ token 表可完全重建：
 - `[truncated]` 行尾恒有 `omitted=<n>`（`n` 是被丢掉的原 token 数），`[pools]` 行的六个字段
   `<池名> <配额> <需求> <占用> <借入> <借出>` 后五个恒为整数。
 
-`[pools]` 只在 1.0 的 v3 里出现；空池列表就是一个空节（`[pools]` 紧跟 `[kept]`），
+`[pools]` 只在 0.8.0 起的 `tally-plan v3` 里出现；空池列表就是一个空节（`[pools]` 紧跟 `[kept]`），
 所以 v2 里没有池的计划升上来只多一行标题。`parse_report` 同时认 v2 与 v3——
 旧报告仍可被 `verify` 读取，新报告不会把旧的摘要变成废纸。
 
@@ -444,14 +444,15 @@ seal <HMAC-SHA256 hex>
 印记则是另一维度：它不检查内容对不对，只检查"有没有人认过这份内容"。
 三层 CI 都跑。
 
-## 1.0：API 冻结
+## 1.0 承诺：API 与格式冻结（自 0.8.0 起）
 
 从这一版起，下面这些签名与格式**不再做不兼容改动**；要加东西只能加新函数、新字段的
 `with_*` 构造器，或升格式版本号：
 
 > **版本号说明**：mooncakes 现阶段只接受 `0.x.y`（`moon package` 会直接拒绝主版本不为 0 的
-> `moon.mod`），所以这次以 **`0.8.0`** 发布。"1.0" 指的是这里的**语义承诺**（API 与五个格式
-> 冻结），不是版本号字面；等平台放开主版本再落 `1.0.0`。
+> `moon.mod`），所以先以 **`0.8.x`** 发布（当前 `0.8.1`：`0.8.0` 落地能力，`0.8.1` 只改文档与
+> 元数据，API 与格式零变更）。"1.0" 指的是这里的**语义承诺**（API 与五个格式冻结），不是
+> 版本号字面；等平台放开主版本再落 `1.0.0`。
 
 | 面 | 冻结内容 |
 |---|---|

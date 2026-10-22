@@ -2,8 +2,9 @@
 
 English | [中文](./README.md)
 
-> **A context-budget engine for MoonBit** — squeeze arbitrarily long context into a token
-> budget, and say exactly what was dropped, truncated, and why.
+> **A verifiable context-assembly contract for MoonBit** — squeeze arbitrarily long context
+> into a token budget, and make "what was dropped, truncated, and why" recomputable byte for
+> byte by a third party.
 
 Context overflow is an event that happens before *every* agent call, not an edge case. The
 usual fix is "characters ÷ 4" and then a hard cut — which lands in the middle of a JSON
@@ -25,7 +26,7 @@ object or a tool call, and leaves you unable to explain afterwards why one chunk
    `verify --seal --key` checks in one pass that the digest was not swapped and that someone
    vouched for it. It proves *a holder of the key signed it*, **not who signed it**: a symmetric
    key carries no identity, and that is stated in the format rather than buried in docs.
-6. **Three finer moves for "it still does not fit"** (1.0) — **per-pool quotas** (tool
+6. **Three finer moves for "it still does not fit"** (shipped in 0.8.0) — **per-pool quotas** (tool
    definitions and history each get their own allowance; a pool that runs over borrows from a
    pool with spare, in declaration order, and the report records `borrowed` / `lent` per pool),
    **score-based sacrifice inside a priority** (a retrieval score is no longer squeezed into
@@ -61,10 +62,10 @@ match @tally.fit_with_result(cfg, segments) {
 drop whole segments", identical to earlier versions (including `limit <= 0`: everything is
 dropped, Pinned overflow is reported, nothing is raised).
 
-Tokenization (`encode` / `decode` / `count`) is the **foundation**: it guarantees the budget
+Tokenization (`encode` / `decode` / `count`) is the **foundation**: it guarantees the assembly
 layer works with exact numbers instead of estimates.
 
-## Seven questions, one engine
+## Seven questions, one contract
 
 | # | Question | tally's answer |
 |---|---|---|
@@ -76,7 +77,7 @@ layer works with exact numbers instead of estimates.
 | 6 | Do tool definitions and history each get an allowance? | `PoolQuota`: per-pool quotas plus borrowing in declaration order; the report records quota / demand / used / borrowed / lent for every pool |
 | 7 | Why this result? Can I reproduce it? | `Plan::render()`: canonical `tally-plan v3` text, one line per segment, covered by the `FORMAT.lock` fingerprint |
 
-## 1.0: three finer moves for when it still does not fit
+## 0.8.0: three finer moves for when it still does not fit
 
 ### Per-pool quotas and borrowing
 
@@ -124,7 +125,7 @@ Four layers, one package each, dependencies point one way:
 |---|---|---|---|
 | Algorithm core | `bpe` | Vocabulary-agnostic byte-level BPE, pre-tokenization scanner, Unicode tables | `core` only |
 | Vocabulary | `vocab` | Vocab model, loading (incl. hand-written base64), canonical export, reproducible BPE training | `bpe` + `core` |
-| **Budget (the product)** | `budget` | **Pluggable `Counter`, window model, priority assembly and truncation, explainable and freezable reports** | `bpe` |
+| **Assembly and verification (the product)** | `budget` | **Pluggable `Counter`, window model, priority assembly and truncation, explainable, freezable and recomputable reports** | `bpe` |
 | Facade | `tally` (root) | Shortest path to `fit_with` / `fit` / `encode` / `count` | all of the above |
 | Tools & examples | `cmd/main`, `cmd/examples` | CLI and runnable examples (the only place with IO) | `x/fs` |
 
@@ -137,17 +138,17 @@ Not substitutes — different axes:
 
 | | `tokenizers-moonbit` | tally |
 |---|---|---|
-| Axis | Breadth: 5 algorithms, 39 models, HF interop | Depth: one fixed cl100k shape, budget done properly |
+| Axis | Breadth: 5 algorithms, 39 models, HF interop | Depth: one fixed cl100k shape, assembly made verifiable |
 | Reference implementation | Python `tokenizers` 0.22.2 | `tiktoken` 0.14.0 |
 | Training | BPE / WordPiece / Unigram (HF semantics) | BPE only, total-order tie-break, byte-identical re-runs |
-| Budget layer | none | `Priority` / `Pinned` / drop report / frozen format |
-| Good for | many models, WordPiece, Unigram, native | "fit it into the window and explain it" |
+| Assembly & verification | none | `Priority` / `Pinned` / drop report / frozen format / digest and recompute |
+| Good for | many models, WordPiece, Unigram, native | "fit it into the window, and let the outcome be recomputed" |
 
-Since 0.4.0 the budget layer only knows the `Counter` interface
+Since 0.4.0 the assembly layer only knows the `Counter` interface
 (`name` + `exact` + `count_bytes: (Bytes) -> Int64`). Since 0.4.1 the cl100k adapter also
 lives in the facade, so `budget`'s package-level dependency is `core` only — importing
 `weopqrst/tally/budget` does not drag the vocabulary in. Wrap your tokenizer's counts in a
-`Counter` and you can count and truncate with our engine:
+`Counter` and you can count and truncate with our assembly layer:
 
 ```moonbit
 // no impl needed for the foreign type
@@ -204,7 +205,7 @@ fn demo(vocab_text : String) -> Unit raise {
     println(piece)
   }
 
-  // 6) 1.0: pool quotas + borrowing, placeholder compression, score inside a priority
+  // 6) 0.8.0: pool quotas + borrowing, placeholder compression, score inside a priority
   let pooled = [
     @tally.pinned("system", "you are a coding agent."),
     // tool definitions live in the `tools` pool; score 9 keeps it over its sibling
@@ -358,7 +359,7 @@ Five external text formats are pinned byte for byte:
 | Format | Content | Pinned by |
 |---|---|---|
 | `tally-vocab v1` | vocabulary canonical text (`vocab/export.mbt`) | `vocab/format_lock_wbtest.mbt` + `tests/golden/sample-vocab.txt` |
-| `tally-plan v3` | budget plan report, with the `[pools]` ledger and `omitted=` (`budget/report.mbt`) | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated,-pools,-compressed}.txt` |
+| `tally-plan v3` | assembly plan report, with the `[pools]` ledger and `omitted=` (`budget/report.mbt`) | `format_lock_wbtest.mbt` + `tests/golden/sample-plan{,-overflow,-truncated,-pools,-compressed}.txt` |
 | `tally-train v1` | training recipe (`vocab/train_format.mbt`) | `vocab/train_lock_wbtest.mbt` + `tests/golden/sample-train.txt` |
 | `tally-digest v1` | report digest sidecar (`budget/digest.mbt`) | `budget/digest_lock_wbtest.mbt` + `tests/golden/sample-digest{,-overflow,-truncated}.txt` |
 | `tally-seal v1` | keyed seal over the digest (`budget/seal.mbt`) | `budget/seal_lock_wbtest.mbt` + `tests/golden/sample-seal.txt` |
@@ -447,15 +448,16 @@ Only the last level rules out "both files were edited into a consistent lie". Th
 different axis: not whether the content is right, but whether anyone vouched for that content.
 CI runs all three.
 
-## 1.0: API freeze
+## The 1.0 promise: frozen API and formats (since 0.8.0)
 
 From this release on, the signatures and formats below take no incompatible changes. New
 capability arrives as new functions, `with_*` builders for new fields, or a new format version:
 
 > **About the version number**: mooncakes currently only accepts `0.x.y` (`moon package` rejects
-> any `moon.mod` whose major version is not 0), so this ships as **`0.8.0`**. "1.0" names the
-> **promise** (frozen API and five frozen formats), not the literal number; `1.0.0` follows when
-> the platform allows a non-zero major.
+> any `moon.mod` whose major version is not 0), so this ships as **`0.8.x`** (currently `0.8.1`:
+> `0.8.0` shipped the capability, `0.8.1` changes docs and metadata only, with no API or format
+> change). "1.0" names the **promise** (frozen API and five frozen formats), not the literal
+> number; `1.0.0` follows when the platform allows a non-zero major.
 
 | Surface | Frozen |
 |---|---|

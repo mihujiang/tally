@@ -33,7 +33,7 @@ fn parse_i64(flag : String, s : String) -> Int64 raise {
 
 ///|
 fn usage() -> Unit {
-  println("tally — context budget engine for MoonBit: fit context into a token limit")
+  println("tally — a verifiable context-assembly contract for MoonBit: fit context into a token limit")
   println("")
   println("usage:")
   println(

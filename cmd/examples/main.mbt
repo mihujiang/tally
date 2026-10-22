@@ -72,7 +72,7 @@ fn demo_multi_turn(v : @tally.Vocab) -> Unit raise {
     "assistant: under tests/golden, checked by the format lock script.",
     "user: what happens when a report format changes?",
     "assistant: the lock script fails before the change can land.",
-    "user: does the budget engine drop or truncate first?",
+    "user: does tally drop or truncate first?",
     "assistant: it drops whole segments unless a strategy is configured.",
   ]
   let segments : Array[@tally.Segment] = [
